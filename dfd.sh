@@ -90,8 +90,18 @@ fi
 if [[ -z "${TOKEN:-}" ]]; then
     err "TOKEN is not set."
     echo "Either:" >&2
-    echo "  1. cp .env.template .env  and fill in your token" >&2
+    echo "  1. cp .env.template .env  and fill in your values" >&2
     echo "  2. export TOKEN=\"sha256~...\"" >&2
+    exit 1
+fi
+
+if [[ -z "${KUBEARCHIVE_BASE:-}" ]]; then
+    err "KUBEARCHIVE_BASE is not set. Set it in .env or export it."
+    exit 1
+fi
+
+if [[ -z "${ARTIFACT_BROWSER_BASE:-}" ]]; then
+    err "ARTIFACT_BROWSER_BASE is not set. Set it in .env or export it."
     exit 1
 fi
 

@@ -20,10 +20,8 @@ DFD dives into failed e2e pipelineruns, pulls logs and artifacts, spawns paralle
 
 ```bash
 cp .env.template .env
-# Edit .env and paste your OCP bearer token
+# Edit .env and fill in your TOKEN, KUBEARCHIVE_BASE, and ARTIFACT_BROWSER_BASE
 ```
-
-Alternatively, export the token directly: `export TOKEN="sha256~..."`
 
 ## Usage
 
