@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="DFD mascot" width="300">
+</p>
+
 # DFD — Dumpster Fire Diving
 
 Because our dumpsters are always on fire.
