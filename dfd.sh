@@ -383,7 +383,7 @@ Output your analysis as markdown following the specified format."
         --max-budget-usd 5.00 \
         > "${PR_DIR}/analysis.md" 2>/dev/null || {
             warn "[${PR_NAME}] Claude analysis failed"
-            echo "# Analysis: ${PR_NAME}\n\n## Summary\n\n- **Root Cause:** unknown\n- **Category:** unknown\n\nClaude analysis failed to complete." > "${PR_DIR}/analysis.md"
+            printf '%s\n' "# Analysis: ${PR_NAME}" "" "## Summary" "" "- **Root Cause:** unknown" "- **Category:** unknown" "" "Claude analysis failed to complete." > "${PR_DIR}/analysis.md"
         }
 
     log "[${PR_NAME}] Analysis complete."
