@@ -13,6 +13,11 @@ set -euo pipefail
 #   export TOKEN="sha256~..."   # OCP bearer token for KubeArchive
 #   ./dfd.sh [HOURS_BACK] [MAX_PARALLEL] [COMPONENTS...]
 #
+# Optional env vars:
+#   PAGES_BASE_URL  — If set, skip pipelineruns already present in the
+#                     published component JSON (e.g. https://example.com).
+#                     If unset, all failures are analyzed (default behavior).
+#
 # Components: tsf-cli (default), tssc-cli, tssc-test
 # Examples:
 #   ./dfd.sh                        # tsf-cli, last 24h, 5 parallel
@@ -231,6 +236,69 @@ for pr in failed_prs:
 
     log "[${DISPLAY_NAME}] Done."
 done
+
+# --- Deduplicate: skip pipelineruns already analyzed in published data ---
+if [[ -n "${PAGES_BASE_URL:-}" ]]; then
+    KNOWN_PRS_FILE="${RUN_DIR}/known_prs.txt"
+    > "${KNOWN_PRS_FILE}"
+
+    for COMP in "${COMPONENTS[@]}"; do
+        COMP_JSON_URL="${PAGES_BASE_URL}/data/${COMP}.json"
+        COMP_JSON_FILE="${RUN_DIR}/known_${COMP}.json"
+
+        log "[${COMP}] Downloading published data for dedup from ${COMP_JSON_URL}..."
+        HTTP_CODE=$(curl -sL -o "${COMP_JSON_FILE}" -w "%{http_code}" "${COMP_JSON_URL}" 2>/dev/null || echo "000")
+        if [[ "${HTTP_CODE}" == "200" ]]; then
+            python3 -c "
+import json, sys
+try:
+    with open('${COMP_JSON_FILE}') as f:
+        data = json.load(f)
+    for entry in data:
+        for run in entry.get('runs', []):
+            pr = run.get('pipelinerun', '')
+            if pr:
+                print(pr)
+except Exception as e:
+    print(f'Warning: failed to parse ${COMP_JSON_FILE}: {e}', file=sys.stderr)
+" >> "${KNOWN_PRS_FILE}" 2>/dev/null
+        else
+            warn "[${COMP}] Could not download ${COMP_JSON_URL} (HTTP ${HTTP_CODE}) — skipping dedup for this component"
+        fi
+    done
+
+    KNOWN_COUNT=$(wc -l < "${KNOWN_PRS_FILE}" | tr -d ' ')
+    if [[ "${KNOWN_COUNT}" -gt 0 ]]; then
+        ORIGINAL_COUNT=$(wc -l < "${FAILED_PRS_FILE}" | tr -d ' ')
+        python3 -c "
+known = set()
+with open('${KNOWN_PRS_FILE}') as f:
+    for line in f:
+        known.add(line.strip())
+kept = []
+skipped = 0
+with open('${FAILED_PRS_FILE}') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        pr_name = line.split('|', 1)[1] if '|' in line else line
+        if pr_name in known:
+            skipped += 1
+        else:
+            kept.append(line)
+with open('${FAILED_PRS_FILE}', 'w') as f:
+    for line in kept:
+        f.write(line + '\n')
+import sys
+print(f'Dedup: {skipped} already-analyzed, {len(kept)} new to process', file=sys.stderr)
+" 2>&1 | head -1 | while read -r msg; do log "${msg}"; done
+        NEW_COUNT=$(wc -l < "${FAILED_PRS_FILE}" | tr -d ' ')
+        log "After dedup: ${ORIGINAL_COUNT} failed -> ${NEW_COUNT} new (skipped ${KNOWN_COUNT} known)"
+    else
+        log "No previously analyzed pipelineruns found — analyzing all failures"
+    fi
+fi
 
 FAILED_COUNT=$(wc -l < "${FAILED_PRS_FILE}" | tr -d ' ')
 log "Found ${FAILED_COUNT} total failed pipelineruns across all components"
