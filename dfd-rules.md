@@ -48,20 +48,25 @@ Get the pipelinerun name, failed task, failed step, and completion time.
 2. Look for installation errors, Helm failures, dependency issues
 3. Classify as `install_failure`
 
-### Step 3: Deep-dive for release pipeline failures
+### Step 3: Deep-dive into cluster artifacts
 
-When the e2e test error says `did not expect Release PipelineRun default-tenant-managed/managed-XXXXX to fail`:
+The test-level error message (from Step 2) often only tells you *what* failed, not *why*. When the error
+references an external task ID, managed pipelinerun name, or any identifier pointing to a backend
+process, you **must** dig into `artifacts/cluster-artifacts/` to find the actual root cause.
 
-1. Extract the managed pipelinerun name (e.g., `managed-nxmpz`)
-2. Look in `artifacts/cluster-artifacts/taskruns.json` for taskruns belonging to that managed pipelinerun:
-   - Filter by label `tekton.dev/pipelineRun` matching the managed PR name
-   - Find the failed taskrun (condition `Succeeded` = `False`)
-   - Note the failed task name, step, and condition message
-3. Look for pod logs in `artifacts/cluster-artifacts/pods/`:
-   - Pattern: `default-tenant-managed_{managed-taskrun-name}-pod_step-{step-name}.log.gz`
+1. Extract any identifiers from the error (task IDs, pipelinerun names, component names, pod names, etc.)
+2. List what's available: `ls artifacts/cluster-artifacts/pods/` and `ls artifacts/cluster-artifacts/*.json`
+3. Search the relevant pod logs for the extracted identifiers:
+   - Pod logs live in `artifacts/cluster-artifacts/pods/` as `{namespace}_{pod}_{container}.log.gz`
    - These files are often plain text despite the `.log.gz` extension — read them directly first
    - If the content looks binary/garbled, try `gunzip`
-4. Analyze the step log for the actual error
+   - Use grep to find the identifier, then read surrounding context
+4. Also check `artifacts/cluster-artifacts/taskruns.json` and `artifacts/cluster-artifacts/pipelineruns.json`
+   for status details of related resources
+5. Keep digging until you find the actual backend error (HTTP status, stack trace, timeout, auth failure, etc.)
+
+**The test-side error alone is never sufficient for the Evidence section.** If cluster artifacts are
+available, your analysis must include what the backend service actually reported.
 
 ## Classification Taxonomy
 
