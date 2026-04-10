@@ -169,7 +169,7 @@ for COMP in "${COMPONENTS[@]}"; do
 
     log "[${DISPLAY_NAME}] Fetching pipelineruns from KubeArchive..."
     PIPELINERUNS_FILE="${RUN_DIR}/all_pipelineruns_${COMP}.json"
-    curl -s -k -H "Authorization: Bearer ${TOKEN}" \
+    curl -s -k --max-time 120 --retry 3 --retry-delay 5 -H "Authorization: Bearer ${TOKEN}" \
         "${KUBEARCHIVE_BASE}/apis/tekton.dev/v1/namespaces/${NAMESPACE}/pipelineruns?labelSelector=${COMPONENT_LABEL}" \
         -o "${PIPELINERUNS_FILE}"
 
@@ -339,7 +339,7 @@ collect_pr_data() {
     log "[${PR_NAME}] Collecting data..."
 
     # Fetch taskruns from KubeArchive
-    curl -s -k -H "Authorization: Bearer ${TOKEN}" \
+    curl -s -k --max-time 120 --retry 3 --retry-delay 5 -H "Authorization: Bearer ${TOKEN}" \
         "${KUBEARCHIVE_BASE}/apis/tekton.dev/v1/namespaces/${NAMESPACE}/taskruns?labelSelector=tekton.dev/pipelineRun=${PR_NAME}" \
         -o "${PR_DIR}/kubearchive/taskruns.json" 2>/dev/null || true
 
@@ -390,7 +390,7 @@ print(json.dumps(result, indent=2))
 
     # Fetch failed step pod log from KubeArchive
     if [[ -n "${POD_NAME}" && -n "${FAILED_STEP}" ]]; then
-        curl -s -k -H "Authorization: Bearer ${TOKEN}" \
+        curl -s -k --max-time 60 --retry 3 --retry-delay 5 -H "Authorization: Bearer ${TOKEN}" \
             "${KUBEARCHIVE_BASE}/api/v1/namespaces/${NAMESPACE}/pods/${POD_NAME}/log?container=step-${FAILED_STEP}&tailLines=500" \
             -o "${PR_DIR}/kubearchive/failed_step.log" 2>/dev/null || true
     fi
