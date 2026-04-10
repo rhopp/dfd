@@ -14,9 +14,9 @@ set -euo pipefail
 #   ./dfd.sh [HOURS_BACK] [MAX_PARALLEL] [COMPONENTS...]
 #
 # Optional env vars:
-#   PAGES_BASE_URL  — If set, skip pipelineruns already present in the
-#                     published component JSON (e.g. https://example.com).
-#                     If unset, all failures are analyzed (default behavior).
+#   PAGES_DATA_DIR  — If set, path to directory containing component JSON
+#                     files (e.g. pages/public/data). Used to skip pipelineruns
+#                     already present. If unset, all failures are analyzed.
 #
 # Components: tsf-cli (default), tssc-cli, tssc-test
 # Examples:
@@ -254,17 +254,15 @@ for pr in failed_prs:
 done
 
 # --- Deduplicate: skip pipelineruns already analyzed in published data ---
-if [[ -n "${PAGES_BASE_URL:-}" ]]; then
+if [[ -n "${PAGES_DATA_DIR:-}" ]]; then
     KNOWN_PRS_FILE="${RUN_DIR}/known_prs.txt"
     > "${KNOWN_PRS_FILE}"
 
     for COMP in "${COMPONENTS[@]}"; do
-        COMP_JSON_URL="${PAGES_BASE_URL}/data/${COMP}.json"
-        COMP_JSON_FILE="${RUN_DIR}/known_${COMP}.json"
+        COMP_JSON_FILE="${PAGES_DATA_DIR}/${COMP}.json"
 
-        log "[${COMP}] Downloading published data for dedup from ${COMP_JSON_URL}..."
-        HTTP_CODE=$(curl -skL -o "${COMP_JSON_FILE}" -w "%{http_code}" "${COMP_JSON_URL}" 2>/dev/null || echo "000")
-        if [[ "${HTTP_CODE}" == "200" ]]; then
+        if [[ -f "${COMP_JSON_FILE}" ]]; then
+            log "[${COMP}] Reading published data for dedup from ${COMP_JSON_FILE}..."
             python3 -c "
 import json, sys
 try:
@@ -278,7 +276,7 @@ except Exception as e:
     print(f'Warning: failed to parse ${COMP_JSON_FILE}: {e}', file=sys.stderr)
 " >> "${KNOWN_PRS_FILE}" 2>/dev/null
         else
-            warn "[${COMP}] Could not download ${COMP_JSON_URL} (HTTP ${HTTP_CODE}) — skipping dedup for this component"
+            warn "[${COMP}] No published data at ${COMP_JSON_FILE} — skipping dedup for this component"
         fi
     done
 
