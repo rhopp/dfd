@@ -101,6 +101,7 @@ available, your analysis must include what the backend service actually reported
 | `component_creation_failure` | infrastructure | Component creation fails for other reasons |
 | **Other** | | |
 | `test_flake` | test_flake | Test fails intermittently with no clear infra cause |
+| **Agent-Discovered Patterns** | | |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ### Classification Priority Rules
@@ -123,6 +124,45 @@ Apply these in order — first match wins:
 10. If component creation test + timeout -> `component_creation_timeout`
 11. If `[INTERRUPTED] by User` (global timeout) -> `build_timeout`
 12. Otherwise -> `unknown`
+
+### When You Classify as "unknown"
+
+If you reach the `unknown` classification after exhausting all rules above, you **must**:
+
+1. **Investigate deeper**: Re-examine the failure evidence. Read additional log files in
+   `artifacts/cluster-artifacts/pods/`, check `events.json`, look at other K8s resources.
+   Spend extra effort to identify the actual root cause pattern.
+
+2. **Check for existing proposals from sibling agents**: Before writing a proposal, check if
+   other agents already proposed a rule for the same root cause:
+   ```
+   ls ../*/rule_proposal.json
+   ```
+   If any exist, read them. If another agent already proposed a rule for the same underlying
+   issue (even with different naming), do NOT write a duplicate — just use the already-proposed
+   `root_cause` in your analysis instead of `unknown`.
+
+3. **If you identify a clear, nameable root cause pattern**, write a proposal file to
+   `{your_pipelinerun_directory}/rule_proposal.json` with this exact structure:
+
+   ```json
+   {
+     "root_cause": "snake_case_id",
+     "category": "infrastructure",
+     "error_signature": "Brief description of the error pattern that identifies this failure",
+     "priority_rule": "If {condition} -> {root_cause_id}",
+     "reasoning": "Why this is a distinct, recurring failure pattern worth adding to the taxonomy",
+     "pipelinerun": "the-pipelinerun-name"
+   }
+   ```
+
+   Then use the proposed `root_cause` and `category` in your analysis output (not `unknown`).
+
+4. **Do NOT propose a new rule if**:
+   - The failure is a one-off fluke (classify as `test_flake` instead)
+   - The failure fits an existing category but with slightly different wording
+   - You are unsure whether the pattern would recur
+   - A sibling agent already proposed a rule for the same issue
 
 ## Output Format
 

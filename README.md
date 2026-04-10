@@ -49,8 +49,9 @@ cp .env.template .env
 ## How it works
 
 1. **Phase 1 — Data Collection**: Fetches PipelineRuns from KubeArchive, filters by component prefix and time window, writes `filtered_runs_{component}.json` with all run statuses. Downloads taskruns, pod logs, and (optionally) cluster artifacts via `oras pull` for failures.
-2. **Phase 2 — Per-Failure Analysis**: Spawns parallel Claude sub-agents, each analyzing one failure using Ginkgo output, pod logs, and cluster artifacts. Each agent classifies the root cause using a taxonomy defined in `dfd-rules.md`. Per-invocation cost/token data is captured.
-3. **Phase 3 — Consolidation**: A final Claude agent reads all individual analyses and produces a consolidated report with failure breakdowns, root cause categories, and prioritized action items. A cost summary table is printed at the end.
+2. **Phase 2 — Per-Failure Analysis**: Spawns parallel Claude sub-agents, each analyzing one failure using Ginkgo output, pod logs, and cluster artifacts. Each agent classifies the root cause using a taxonomy defined in `dfd-rules.md`. If a failure can't be classified, the agent investigates deeper and may propose a new taxonomy rule.
+3. **Phase 2.5 — Rule Proposal Merge**: Collects any `rule_proposal.json` files written by agents that discovered new failure patterns. Validates and deduplicates proposals (using Claude for semantic dedup when there are multiple), then inserts new entries into `dfd-rules.md`. This makes the taxonomy self-evolving.
+4. **Phase 3 — Consolidation**: A final Claude agent reads all individual analyses and produces a consolidated report with failure breakdowns, root cause categories, and prioritized action items. A cost summary table is printed at the end.
 
 Results are cached in `runs/<date>/` — rerunning the same day skips already-collected data and completed analyses.
 
@@ -63,3 +64,4 @@ Reports are written to `runs/<date>/`:
 - `<pipelinerun>/kubearchive/` — raw taskruns and logs
 - `<pipelinerun>/artifacts/` — cluster artifacts (if downloaded)
 - `cost/` — per-invocation Claude cost/token data (JSON files)
+- `<pipelinerun>/rule_proposal.json` — new taxonomy rule proposed by agent (if any)

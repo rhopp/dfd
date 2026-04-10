@@ -458,14 +458,16 @@ Then read ${PR_DIR}/kubearchive/failed_step.log for the pod log.
 If the failure involves a release pipeline, check ${PR_DIR}/artifacts/cluster-artifacts/ for managed pipelinerun data.
 
 Follow the investigation workflow and classification rules in your system prompt.
-Output your analysis as markdown following the specified format."
+Output your analysis as markdown following the specified format.
+
+If you classify the failure as unknown but discover a new recognizable pattern, write a rule proposal to ${PR_DIR}/rule_proposal.json following the instructions in your system prompt."
 
     local CLAUDE_JSON="${PR_DIR}/claude_output.json"
     claude -p "${PROMPT}" \
         --verbose \
         --output-format json \
         --dangerously-skip-permissions \
-        --allowedTools "Read,Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(find*),Bash(gunzip*),Bash(wc*),Bash(file*)" \
+        --allowedTools "Read,Write(${PR_DIR}/rule_proposal.json),Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(find*),Bash(gunzip*),Bash(wc*),Bash(file*),Bash(grep*)" \
         --append-system-prompt-file "${SCRIPT_DIR}/dfd-rules.md" \
         --max-budget-usd 5.00 \
         > "${CLAUDE_JSON}" 2> "${PR_DIR}/claude_stderr.log" || {
@@ -516,6 +518,24 @@ while IFS= read -r LINE; do
 done < "${FAILED_PRS_FILE}"
 wait
 log "Phase 2 complete. All analyses finished."
+
+# =============================================================================
+# Phase 2.5: Merge Rule Proposals (self-evolving taxonomy)
+# =============================================================================
+
+log "=== Phase 2.5: Rule Proposal Merge ==="
+
+PROPOSALS_FOUND=$(find "${RUN_DIR}" -name "rule_proposal.json" -type f | wc -l | tr -d ' ')
+if [[ "${PROPOSALS_FOUND}" -gt 0 ]]; then
+    log "Found ${PROPOSALS_FOUND} rule proposal(s). Merging into dfd-rules.md..."
+    python3 "${SCRIPT_DIR}/merge-rule-proposals.py" \
+        --runs-dir "${RUN_DIR}" \
+        --rules-file "${SCRIPT_DIR}/dfd-rules.md" \
+        --output "${SCRIPT_DIR}/dfd-rules.md" \
+        2>&1 | while IFS= read -r line; do log "[rules-merge] ${line}"; done
+else
+    log "No rule proposals found. Taxonomy unchanged."
+fi
 
 # =============================================================================
 # Phase 3: Consolidation
