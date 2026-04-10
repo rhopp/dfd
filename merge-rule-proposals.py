@@ -265,7 +265,10 @@ def main():
 
     print(f"Found {len(proposals)} proposal(s):")
     for p in proposals:
-        print(f"  - {p['root_cause']} ({p['_component']}) from {p.get('_source_file', '?')}")
+        print(f"  - {p.get('root_cause', '???')} ({p['_component']}) from {p.get('_source_file', '?')}")
+        # Log actual keys for debugging
+        keys = [k for k in p.keys() if not k.startswith("_")]
+        print(f"    keys: {keys}")
 
     # 2. Validate
     valid = []
