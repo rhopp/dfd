@@ -91,18 +91,23 @@ If you reach the `unknown` classification after exhausting all rules above, you 
    `root_cause` in your analysis instead of `unknown`.
 
 3. **If you identify a clear, nameable root cause pattern**, write a proposal file to
-   `{your_pipelinerun_directory}/rule_proposal.json` with this exact structure:
+   `{your_pipelinerun_directory}/rule_proposal.json` with **exactly** these field names
+   (do NOT rename, add, or restructure them):
 
    ```json
    {
      "root_cause": "snake_case_id",
      "category": "infrastructure",
      "error_signature": "Brief description of the error pattern that identifies this failure",
-     "priority_rule": "If {condition} -> {root_cause_id}",
+     "priority_rule": "If {condition} -> `snake_case_id`",
      "reasoning": "Why this is a distinct, recurring failure pattern worth adding to the taxonomy",
      "pipelinerun": "the-pipelinerun-name"
    }
    ```
+
+   **IMPORTANT**: Use these exact six field names. Do not use alternatives like
+   `proposed_root_cause`, `description`, `detection_logic`, `example_signature`, etc.
+   The merge script will reject proposals with wrong field names.
 
    Then use the proposed `root_cause` and `category` in your analysis output (not `unknown`).
 

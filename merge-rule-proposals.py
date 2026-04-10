@@ -30,6 +30,67 @@ from collections import defaultdict
 REQUIRED_FIELDS = ["root_cause", "category", "error_signature", "priority_rule", "reasoning"]
 ROOT_CAUSE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{2,50}$")
 
+def normalize_proposal_with_claude(data, source_path):
+    """Use Claude to normalize a proposal with non-standard field names into the expected schema."""
+    expected_fields = REQUIRED_FIELDS + ["pipelinerun"]
+    actual_keys = [k for k in data.keys() if not k.startswith("_")]
+
+    # Check if already in the expected format
+    if all(f in data for f in REQUIRED_FIELDS):
+        return data
+
+    print(f"  Proposal {source_path} has non-standard fields: {actual_keys}")
+    print(f"  Expected: {expected_fields}")
+    print(f"  Calling Claude to normalize...")
+
+    prompt = f"""A CI failure analysis agent wrote a rule_proposal.json but used non-standard field names.
+Convert it to the expected schema. Map the agent's fields to these exact fields:
+
+Expected schema:
+{{
+  "root_cause": "snake_case_id (3-51 chars, lowercase)",
+  "category": "infrastructure | test_flake | unknown",
+  "error_signature": "Brief description of the error pattern",
+  "priority_rule": "If {{condition}} -> `root_cause_id`",
+  "reasoning": "Why this is a distinct recurring pattern",
+  "pipelinerun": "the-pipelinerun-name"
+}}
+
+Actual proposal to normalize:
+{json.dumps({k: v for k, v in data.items() if not k.startswith("_")}, indent=2)}
+
+Respond with ONLY the normalized JSON object. No markdown, no explanation."""
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt, "--output-format", "json", "--max-budget-usd", "0.20"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            print(f"  WARNING: Claude normalization failed (exit {result.returncode})")
+            return data
+
+        output = json.loads(result.stdout)
+        for item in output:
+            if item.get("type") == "result":
+                result_text = item.get("result", "").strip()
+                if result_text.startswith("```"):
+                    result_text = re.sub(r"^```\w*\n?", "", result_text)
+                    result_text = re.sub(r"\n?```$", "", result_text)
+                normalized = json.loads(result_text)
+                print(f"  Normalized successfully: root_cause={normalized.get('root_cause', '?')}")
+                return normalized
+
+        print(f"  WARNING: Could not parse Claude normalization output")
+        return data
+
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
+        print(f"  WARNING: Claude normalization error ({e})")
+        return data
+
 
 def find_proposals(runs_dir):
     """Find and load all rule_proposal.json files, enriching with component from metadata.json."""
@@ -39,6 +100,7 @@ def find_proposals(runs_dir):
         try:
             with open(path) as f:
                 data = json.load(f)
+            data = normalize_proposal_with_claude(data, path)
             data["_source_file"] = path
 
             # Read component from sibling metadata.json
@@ -61,7 +123,8 @@ def validate_proposal(proposal):
     """Validate a single proposal. Returns (is_valid, error_message)."""
     for field in REQUIRED_FIELDS:
         if field not in proposal or not str(proposal[field]).strip():
-            return False, f"missing or empty field: {field}"
+            actual_keys = [k for k in proposal.keys() if not k.startswith("_")]
+            return False, f"missing or empty field: {field} (found keys: {actual_keys}, expected: {REQUIRED_FIELDS})"
 
     if not ROOT_CAUSE_PATTERN.match(proposal["root_cause"]):
         return False, f"invalid root_cause format: {proposal['root_cause']} (must be snake_case, 3-51 chars)"
@@ -280,7 +343,8 @@ def main():
             print(f"  SKIPPED (invalid): {p.get('root_cause', '?')} — {error}")
 
     if not valid:
-        print("No valid proposals after validation.")
+        print(f"WARNING: Found {len(proposals)} rule proposal(s) but NONE passed validation.")
+        print("Check the field names — expected: root_cause, category, error_signature, priority_rule, reasoning")
         return
 
     # 3. Group by component
