@@ -188,6 +188,7 @@ success = 0
 failed = 0
 aborted = 0
 failed_prs = []
+all_filtered = []
 
 for item in data.get('items', []):
     name = item['metadata']['name']
@@ -221,10 +222,25 @@ for item in data.get('items', []):
                 status = 'FAILURE'
                 failed += 1
 
+    if status == 'UNKNOWN':
+        continue
+
+    run_status = {'SUCCESS': 'succeeded', 'FAILURE': 'failed', 'ABORTED': 'aborted'}[status]
+    all_filtered.append({
+        'pipelinerun': name,
+        'component': '${COMP}',
+        'completion_time': ct,
+        'status': run_status,
+    })
+
     if status == 'FAILURE':
         failed_prs.append(name)
 
 print(f'Total: {total}, Success: {success}, Failed: {failed}, Aborted: {aborted}', file=sys.stderr)
+
+# Write all filtered runs for extract-data.py
+with open('${RUN_DIR}/filtered_runs_${COMP}.json', 'w') as f:
+    json.dump(all_filtered, f, indent=2)
 
 for pr in failed_prs:
     # Output component|pipelinerun so we know which component each PR belongs to
