@@ -464,13 +464,15 @@ Output your analysis as markdown following the specified format."
 
     local CLAUDE_JSON="${PR_DIR}/claude_output.json"
     claude -p "${PROMPT}" \
+        --verbose \
         --output-format json \
         --dangerously-skip-permissions \
         --allowedTools "Read,Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(find*),Bash(gunzip*),Bash(wc*),Bash(file*)" \
         --append-system-prompt-file "${SCRIPT_DIR}/dfd-rules.md" \
         --max-budget-usd 5.00 \
-        > "${CLAUDE_JSON}" || {
-            warn "[${PR_NAME}] Claude analysis failed"
+        > "${CLAUDE_JSON}" 2> "${PR_DIR}/claude_stderr.log" || {
+            warn "[${PR_NAME}] Claude analysis failed (exit code $?)"
+            warn "[${PR_NAME}] stderr: $(cat "${PR_DIR}/claude_stderr.log")"
             printf '%s\n' "# Analysis: ${PR_NAME}" "" "## Summary" "" "- **Root Cause:** unknown" "- **Category:** unknown" "" "Claude analysis failed to complete." > "${PR_DIR}/analysis.md"
             return
         }
@@ -657,13 +659,19 @@ For each root_cause category found, create a section:
 Be concise. Group similar failures. Prioritize by frequency. Do not repeat raw log output."
 
 CONSOLIDATION_JSON="${RUN_DIR}/consolidation_output.json"
+log "Running consolidation claude command..."
 claude -p "${CONSOLIDATION_PROMPT}" \
+    --verbose \
     --output-format json \
     --dangerously-skip-permissions \
     --allowedTools "Read,Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(wc*)" \
     --max-budget-usd 5.00 \
-    > "${CONSOLIDATION_JSON}" || {
-        err "Consolidation failed"
+    > "${CONSOLIDATION_JSON}" 2> "${RUN_DIR}/consolidation_stderr.log" || {
+        err "Consolidation failed (exit code $?)"
+        err "stderr output:"
+        cat "${RUN_DIR}/consolidation_stderr.log" >&2
+        err "stdout/JSON output:"
+        cat "${CONSOLIDATION_JSON}" >&2
         echo "# Consolidation Failed" > "${RUN_DIR}/consolidated-report.md"
         echo "" >> "${RUN_DIR}/consolidated-report.md"
         echo "Individual analyses are available in each pipelinerun subdirectory." >> "${RUN_DIR}/consolidated-report.md"
