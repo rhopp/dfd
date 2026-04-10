@@ -435,19 +435,6 @@ log "=== Phase 2: Per-Failure Analysis ==="
 COST_DIR="${RUN_DIR}/cost"
 mkdir -p "${COST_DIR}"
 
-# Extract root_cause value from an analysis.md file (returns empty if not found)
-extract_root_cause() {
-    local ANALYSIS_FILE="$1"
-    python3 -c "
-import re
-with open('${ANALYSIS_FILE}') as f:
-    text = f.read()
-m = re.search(r'\*\*Root Cause:?\*\*:?\s*(.+?)(?:\n|$)', text)
-if m:
-    print(m.group(1).strip().strip('\`'))
-" 2>/dev/null
-}
-
 # Get set of valid root_cause IDs from a component's rule file (one per line)
 get_valid_root_causes() {
     local COMP="$1"
@@ -459,6 +446,46 @@ with open('${RULES_FILE}') as f:
         m = re.match(r'\|\s*\x60(\w+)\x60\s*\|', line)
         if m:
             print(m.group(1))
+" 2>/dev/null
+}
+
+# Validate an analysis.md has all required fields parseable by extract-data.py.
+# Returns a comma-separated list of missing fields, or empty if all present.
+# Also checks root_cause against valid taxonomy IDs for the component.
+validate_analysis() {
+    local ANALYSIS_FILE="$1"
+    local VALID_ROOT_CAUSES="$2"
+    python3 -c "
+import re, sys
+
+with open('${ANALYSIS_FILE}') as f:
+    text = f.read()
+
+missing = []
+
+# Required summary fields
+for field in ['Root Cause', 'Category', 'Failed Task', 'Failed Step']:
+    m = re.search(rf'\*\*{field}:?\*\*:?\s*(.+?)(?:\n|$)', text)
+    if not m or not m.group(1).strip().strip('\x60'):
+        missing.append(field)
+
+# Root cause must be a valid taxonomy ID
+rc_match = re.search(r'\*\*Root Cause:?\*\*:?\s*(.+?)(?:\n|$)', text)
+if rc_match:
+    rc = rc_match.group(1).strip().strip('\x60')
+    valid = set('''${VALID_ROOT_CAUSES}'''.split())
+    if rc and rc not in valid:
+        missing.append('Root Cause (invalid: ' + rc + ')')
+
+# Evidence section
+if not re.search(r'## Evidence', text):
+    missing.append('Evidence section')
+
+# Details section
+if not re.search(r'## Details', text):
+    missing.append('Details section')
+
+print(','.join(missing))
 " 2>/dev/null
 }
 
@@ -531,6 +558,80 @@ for item in data:
     rm -f "${CLAUDE_JSON}"
 
     log "[${PR_NAME}] Analysis complete."
+}
+
+# Re-analyze a PR with specific feedback about what's wrong with the previous analysis.
+# Used by Phase 2.7 validation loop when fields are missing or invalid.
+reanalyze_pr() {
+    local COMP="$1"
+    local PR_NAME="$2"
+    local MISSING_FIELDS="$3"   # comma-separated list of issues
+    local PR_DIR="${RUN_DIR}/${PR_NAME}"
+
+    if [[ ! -f "${PR_DIR}/metadata.json" ]]; then
+        warn "[${PR_NAME}] No metadata.json — skipping re-analysis"
+        return
+    fi
+
+    log "[${PR_NAME}] Re-analyzing (issues: ${MISSING_FIELDS})..."
+
+    local PROMPT="Your previous analysis of the failed e2e pipelinerun in ${PR_DIR} had formatting issues that prevent machine parsing.
+
+The following problems were detected:
+${MISSING_FIELDS}
+
+Re-analyze the failure. Read ${PR_DIR}/metadata.json and ${PR_DIR}/kubearchive/failed_step.log again.
+If artifacts exist, check ${PR_DIR}/artifacts/cluster-artifacts/.
+
+CRITICAL: Your output MUST follow the EXACT format specified in your system prompt.
+Pay special attention to:
+- Section headers: ## Summary, ## Failed Test, ## Evidence, ## Details, ## Suggested Action
+- Summary fields on their own lines: - **Root Cause:** \`value\`
+- Root Cause must be a valid taxonomy ID from the rules (snake_case, backtick-wrapped)
+- Evidence section must contain a fenced code block
+- Details and Suggested Action sections must have content
+
+Follow the investigation workflow and classification rules in your system prompt.
+Output your analysis as markdown following the specified format."
+
+    local CLAUDE_JSON="${PR_DIR}/claude_output.json"
+    claude -p "${PROMPT}" \
+        --verbose \
+        --output-format json \
+        --dangerously-skip-permissions \
+        --allowedTools "Read,Write(${PR_DIR}/rule_proposal.json),Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(find*),Bash(gunzip*),Bash(wc*),Bash(file*),Bash(grep*)" \
+        --append-system-prompt-file "${SCRIPT_DIR}/dfd-rules.md" \
+        --append-system-prompt-file "${SCRIPT_DIR}/dfd-rules-${COMP}.md" \
+        --max-budget-usd 5.00 \
+        > "${CLAUDE_JSON}" 2> "${PR_DIR}/claude_stderr.log" || {
+            warn "[${PR_NAME}] Claude re-analysis failed (exit code $?)"
+            return
+        }
+
+    python3 -c "
+import json, sys
+with open('${CLAUDE_JSON}') as f:
+    data = json.load(f)
+for item in data:
+    if item.get('type') == 'result':
+        with open('${PR_DIR}/analysis.md', 'w') as out:
+            out.write(item.get('result', ''))
+        cost = {
+            'invocation': '${PR_NAME}-revalidation',
+            'cost_usd': item.get('total_cost_usd', 0),
+            'input_tokens': item.get('usage', {}).get('input_tokens', 0),
+            'output_tokens': item.get('usage', {}).get('output_tokens', 0),
+            'cache_read_tokens': item.get('usage', {}).get('cache_read_input_tokens', 0),
+            'cache_creation_tokens': item.get('usage', {}).get('cache_creation_input_tokens', 0),
+            'duration_ms': item.get('duration_api_ms', 0),
+        }
+        with open('${COST_DIR}/${PR_NAME}-revalidation.json', 'w') as cf:
+            json.dump(cost, cf, indent=2)
+        break
+" 2>/dev/null
+    rm -f "${CLAUDE_JSON}"
+
+    log "[${PR_NAME}] Re-analysis complete."
 }
 
 JOBS_RUNNING=0
@@ -617,47 +718,60 @@ fi
 # =============================================================================
 
 MAX_VALIDATION_RETRIES=2
-log "=== Phase 2.7: Root Cause Validation ==="
+log "=== Phase 2.7: Analysis Validation ==="
+
+# Build a mapping of component -> valid root causes (once, outside the loop)
+declare -A COMP_VALID_ROOT_CAUSES
+for COMP in "${COMPONENTS[@]}"; do
+    COMP_VALID_ROOT_CAUSES[$COMP]=$(get_valid_root_causes "${COMP}" | tr '\n' ' ')
+done
 
 for RETRY in $(seq 1 ${MAX_VALIDATION_RETRIES}); do
     INVALID_PRS=""
     INVALID_COUNT=0
+
+    # Parallel arrays to track which PRs have which issues
+    declare -A PR_ISSUES
 
     while IFS= read -r LINE; do
         [[ -z "${LINE}" ]] && continue
         COMP="${LINE%%|*}"
         PR_NAME="${LINE#*|}"
         ANALYSIS_FILE="${RUN_DIR}/${PR_NAME}/analysis.md"
-        [[ ! -f "${ANALYSIS_FILE}" ]] && continue
 
-        ROOT_CAUSE=$(extract_root_cause "${ANALYSIS_FILE}")
-
-        # Check if root_cause is in the valid set for this component
-        VALID=$(get_valid_root_causes "${COMP}")
-        if [[ -z "${ROOT_CAUSE}" ]]; then
-            log "[${PR_NAME}] No root_cause found in analysis (wrong format?) (retry ${RETRY}/${MAX_VALIDATION_RETRIES})"
+        if [[ ! -f "${ANALYSIS_FILE}" ]]; then
+            PR_ISSUES["${LINE}"]="analysis.md file missing"
             INVALID_PRS="${INVALID_PRS}${LINE}\n"
             INVALID_COUNT=$((INVALID_COUNT + 1))
-        elif ! echo "${VALID}" | grep -qxF "${ROOT_CAUSE}"; then
-            log "[${PR_NAME}] Invalid root_cause: '${ROOT_CAUSE}' (retry ${RETRY}/${MAX_VALIDATION_RETRIES})"
+            continue
+        fi
+
+        MISSING=$(validate_analysis "${ANALYSIS_FILE}" "${COMP_VALID_ROOT_CAUSES[$COMP]}")
+
+        if [[ -n "${MISSING}" ]]; then
+            log "[${PR_NAME}] Validation failed (retry ${RETRY}/${MAX_VALIDATION_RETRIES}): ${MISSING}"
+            PR_ISSUES["${LINE}"]="${MISSING}"
             INVALID_PRS="${INVALID_PRS}${LINE}\n"
             INVALID_COUNT=$((INVALID_COUNT + 1))
         fi
     done < "${FAILED_PRS_FILE}"
 
     if [[ ${INVALID_COUNT} -eq 0 ]]; then
-        log "All root_cause values are valid."
+        log "All analyses are valid."
         break
     fi
 
-    log "Found ${INVALID_COUNT} invalid root_cause(s). Re-analyzing (attempt ${RETRY}/${MAX_VALIDATION_RETRIES})..."
+    log "Found ${INVALID_COUNT} invalid analysis/analyses. Re-analyzing (attempt ${RETRY}/${MAX_VALIDATION_RETRIES})..."
     JOBS_RUNNING=0
     while IFS= read -r LINE; do
         [[ -z "${LINE}" ]] && continue
         COMP="${LINE%%|*}"
         PR_NAME="${LINE#*|}"
+        ISSUES="${PR_ISSUES[${LINE}]}"
+
+        # Remove old analysis so the agent starts fresh
         rm -f "${RUN_DIR}/${PR_NAME}/analysis.md"
-        analyze_pr "${COMP}" "${PR_NAME}" < /dev/null &
+        reanalyze_pr "${COMP}" "${PR_NAME}" "${ISSUES}" < /dev/null &
         JOBS_RUNNING=$((JOBS_RUNNING + 1))
 
         if [[ ${JOBS_RUNNING} -ge ${MAX_PARALLEL} ]]; then
@@ -666,26 +780,95 @@ for RETRY in $(seq 1 ${MAX_VALIDATION_RETRIES}); do
         fi
     done < <(printf "${INVALID_PRS}")
     wait
+
+    unset PR_ISSUES
 done
 
-# Force any remaining invalid root_causes to "unknown"
+# Force-fix any remaining invalid analyses after all retries exhausted
 while IFS= read -r LINE; do
     [[ -z "${LINE}" ]] && continue
     COMP="${LINE%%|*}"
     PR_NAME="${LINE#*|}"
     ANALYSIS_FILE="${RUN_DIR}/${PR_NAME}/analysis.md"
-    [[ ! -f "${ANALYSIS_FILE}" ]] && continue
+    PR_DIR="${RUN_DIR}/${PR_NAME}"
 
-    ROOT_CAUSE=$(extract_root_cause "${ANALYSIS_FILE}")
-    VALID=$(get_valid_root_causes "${COMP}")
+    if [[ ! -f "${ANALYSIS_FILE}" ]]; then
+        log "[${PR_NAME}] Writing fallback analysis (file missing after ${MAX_VALIDATION_RETRIES} retries)"
+        # Read metadata for fallback values
+        FAILED_TASK=$(jq -r '.failed_task // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
+        FAILED_STEP=$(jq -r '.failed_step // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
+        COMPLETION=$(jq -r '.completion_time // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
+        cat > "${ANALYSIS_FILE}" <<FALLBACK
+# Analysis: ${PR_NAME}
 
-    if [[ -z "${ROOT_CAUSE}" ]]; then
-        log "[${PR_NAME}] Forcing analysis to 'unknown' (unparseable format) after ${MAX_VALIDATION_RETRIES} retries"
-        printf '%s\n' "# Analysis: ${PR_NAME}" "" "## Summary" "" "- **Root Cause:** \`unknown\`" "- **Category:** \`unknown\`" "" "Agent produced unparseable analysis format after ${MAX_VALIDATION_RETRIES} retries." > "${ANALYSIS_FILE}"
-    elif ! echo "${VALID}" | grep -qxF "${ROOT_CAUSE}"; then
-        log "[${PR_NAME}] Forcing invalid root_cause '${ROOT_CAUSE}' -> 'unknown' after ${MAX_VALIDATION_RETRIES} retries"
-        sed -i -E "s/(\*\*Root Cause:?\*\*:?\s*).+/\1\`unknown\`/" "${ANALYSIS_FILE}"
-        sed -i -E "s/(\*\*Category:?\*\*:?\s*).+/\1\`unknown\`/" "${ANALYSIS_FILE}"
+## Summary
+
+- **Root Cause:** \`unknown\`
+- **Category:** \`unknown\`
+- **Component:** \`${COMP}\`
+- **Failed Task:** \`${FAILED_TASK}\`
+- **Failed Step:** \`${FAILED_STEP}\`
+- **Completion Time:** ${COMPLETION}
+
+## Failed Test
+
+- **Test Name:** N/A
+- **Error Message:** Agent failed to produce valid analysis after ${MAX_VALIDATION_RETRIES} retries
+
+## Evidence
+
+\`\`\`
+No evidence available — agent analysis failed validation.
+\`\`\`
+
+## Details
+
+The Claude agent was unable to produce a correctly formatted analysis after ${MAX_VALIDATION_RETRIES} retry attempts. Manual investigation is recommended.
+
+## Suggested Action
+
+Review the pipelinerun logs manually. Check ${PR_DIR}/kubearchive/ for raw data.
+FALLBACK
+        continue
+    fi
+
+    MISSING=$(validate_analysis "${ANALYSIS_FILE}" "${COMP_VALID_ROOT_CAUSES[$COMP]}")
+    if [[ -n "${MISSING}" ]]; then
+        log "[${PR_NAME}] Forcing fallback analysis after ${MAX_VALIDATION_RETRIES} retries (issues: ${MISSING})"
+        FAILED_TASK=$(jq -r '.failed_task // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
+        FAILED_STEP=$(jq -r '.failed_step // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
+        COMPLETION=$(jq -r '.completion_time // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
+        cat > "${ANALYSIS_FILE}" <<FALLBACK
+# Analysis: ${PR_NAME}
+
+## Summary
+
+- **Root Cause:** \`unknown\`
+- **Category:** \`unknown\`
+- **Component:** \`${COMP}\`
+- **Failed Task:** \`${FAILED_TASK}\`
+- **Failed Step:** \`${FAILED_STEP}\`
+- **Completion Time:** ${COMPLETION}
+
+## Failed Test
+
+- **Test Name:** N/A
+- **Error Message:** Agent produced invalid analysis format after ${MAX_VALIDATION_RETRIES} retries (${MISSING})
+
+## Evidence
+
+\`\`\`
+No evidence available — agent analysis failed validation.
+\`\`\`
+
+## Details
+
+The Claude agent produced an analysis that could not be machine-parsed. Validation issues: ${MISSING}. Manual investigation is recommended.
+
+## Suggested Action
+
+Review the pipelinerun logs manually. Check ${PR_DIR}/kubearchive/ for raw data.
+FALLBACK
     fi
 done < "${FAILED_PRS_FILE}"
 
