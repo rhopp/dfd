@@ -48,16 +48,18 @@ cp .env.template .env
 
 ## How it works
 
-1. **Phase 1 — Data Collection**: Fetches failed pipelineruns from KubeArchive, downloads taskruns, pod logs, and (optionally) cluster artifacts via `oras pull`.
-2. **Phase 2 — Per-Failure Analysis**: Spawns parallel Claude sub-agents, each analyzing one failure using Ginkgo output, pod logs, and cluster artifacts. Each agent classifies the root cause using a taxonomy defined in `dfd-rules.md`.
-3. **Phase 3 — Consolidation**: A final Claude agent reads all individual analyses and produces a consolidated report with failure breakdowns, root cause categories, and prioritized action items.
+1. **Phase 1 — Data Collection**: Fetches PipelineRuns from KubeArchive, filters by component prefix and time window, writes `filtered_runs_{component}.json` with all run statuses. Downloads taskruns, pod logs, and (optionally) cluster artifacts via `oras pull` for failures.
+2. **Phase 2 — Per-Failure Analysis**: Spawns parallel Claude sub-agents, each analyzing one failure using Ginkgo output, pod logs, and cluster artifacts. Each agent classifies the root cause using a taxonomy defined in `dfd-rules.md`. Per-invocation cost/token data is captured.
+3. **Phase 3 — Consolidation**: A final Claude agent reads all individual analyses and produces a consolidated report with failure breakdowns, root cause categories, and prioritized action items. A cost summary table is printed at the end.
 
 Results are cached in `runs/<date>/` — rerunning the same day skips already-collected data and completed analyses.
 
 ## Output
 
 Reports are written to `runs/<date>/`:
+- `filtered_runs_{component}.json` — all runs (succeeded, failed, aborted), pre-filtered by prefix and time
 - `consolidated-report.md` — the full summary
 - `<pipelinerun>/analysis.md` — individual failure analysis
 - `<pipelinerun>/kubearchive/` — raw taskruns and logs
 - `<pipelinerun>/artifacts/` — cluster artifacts (if downloaded)
+- `cost/` — per-invocation Claude cost/token data (JSON files)
