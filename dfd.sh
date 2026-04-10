@@ -469,7 +469,7 @@ Output your analysis as markdown following the specified format."
         --allowedTools "Read,Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(find*),Bash(gunzip*),Bash(wc*),Bash(file*)" \
         --append-system-prompt-file "${SCRIPT_DIR}/dfd-rules.md" \
         --max-budget-usd 5.00 \
-        > "${CLAUDE_JSON}" 2>/dev/null || {
+        > "${CLAUDE_JSON}" || {
             warn "[${PR_NAME}] Claude analysis failed"
             printf '%s\n' "# Analysis: ${PR_NAME}" "" "## Summary" "" "- **Root Cause:** unknown" "- **Category:** unknown" "" "Claude analysis failed to complete." > "${PR_DIR}/analysis.md"
             return
@@ -662,7 +662,7 @@ claude -p "${CONSOLIDATION_PROMPT}" \
     --dangerously-skip-permissions \
     --allowedTools "Read,Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(wc*)" \
     --max-budget-usd 5.00 \
-    > "${CONSOLIDATION_JSON}" 2>/dev/null || {
+    > "${CONSOLIDATION_JSON}" || {
         err "Consolidation failed"
         echo "# Consolidation Failed" > "${RUN_DIR}/consolidated-report.md"
         echo "" >> "${RUN_DIR}/consolidated-report.md"
