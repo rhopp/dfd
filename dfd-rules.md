@@ -119,18 +119,20 @@ If you reach the `unknown` classification after exhausting all rules above, you 
 
 ## Output Format
 
-Write your analysis as markdown with this exact structure:
+Write your analysis as markdown with **exactly** this structure. Do NOT rename sections,
+reorder fields, move colons outside `**`, or add extra sections. The output is parsed by a
+downstream script that depends on the exact format below.
 
 ```markdown
 # Analysis: {pipelinerun-name}
 
 ## Summary
 
-- **Root Cause:** {root_cause}
-- **Category:** {category}
-- **Component:** {component from metadata.json}
-- **Failed Task:** {task name}
-- **Failed Step:** {step name}
+- **Root Cause:** `{root_cause_id}`
+- **Category:** `{category}`
+- **Component:** `{component from metadata.json}`
+- **Failed Task:** `{task name}`
+- **Failed Step:** `{step name}`
 - **Completion Time:** {timestamp}
 
 ## Failed Test
@@ -140,7 +142,9 @@ Write your analysis as markdown with this exact structure:
 
 ## Evidence
 
+```
 {Key log lines or error output that led to the classification. Include 5-15 relevant lines.}
+```
 
 ## Details
 
@@ -150,6 +154,49 @@ If a release pipeline failure, include the managed pipelinerun name and which ta
 ## Suggested Action
 
 {1-2 sentences on what to investigate or fix.}
+```
+
+### Formatting rules (IMPORTANT — output is machine-parsed)
+
+- Section headers must be exactly `## Summary`, `## Failed Test`, `## Evidence`, `## Details`, `## Suggested Action`
+- Each Summary field must be on its own line as `- **Field Name:** value` — colon INSIDE the bold markers
+- Root Cause and Category values must use backtick-wrapped taxonomy IDs: `- **Root Cause:** \`rosa_provisioning_failure\``
+- Do NOT use `### Classification` or any other heading variations
+- Do NOT put the colon outside bold like `**Root Cause**: value` — it must be `**Root Cause:** value`
+
+### Example output
+
+```markdown
+# Analysis: e2e-4.19-x5f2n
+
+## Summary
+
+- **Root Cause:** `rosa_provisioning_failure`
+- **Category:** `infrastructure`
+- **Component:** `tssc-cli`
+- **Failed Task:** `provision-rosa`
+- **Failed Step:** `provision`
+- **Completion Time:** 2026-04-09T16:54:38Z
+
+## Failed Test
+
+- **Test Name:** N/A
+- **Error Message:** ROSA cluster provisioning timed out
+
+## Evidence
+
+```
+ERR: Cluster 'kx-6207678ac4' is not yet ready
+certificate request has failed: 404 urn:ietf:params:acme:error:malformed
+```
+
+## Details
+
+ROSA cluster provisioning failed due to a certificate error during cluster initialization.
+
+## Suggested Action
+
+Retry the pipeline. If recurring, investigate ACME certificate provisioning in the target region.
 ```
 
 ## Important Notes
