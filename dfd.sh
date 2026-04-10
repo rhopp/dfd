@@ -433,6 +433,10 @@ log "Phase 1 complete. Data collected for ${FAILED_COUNT} failed pipelineruns."
 
 log "=== Phase 2: Per-Failure Analysis ==="
 
+# Cost tracking
+COST_DIR="${RUN_DIR}/cost"
+mkdir -p "${COST_DIR}"
+
 analyze_pr() {
     local PR_NAME="$1"
     local PR_DIR="${RUN_DIR}/${PR_NAME}"
@@ -458,16 +462,42 @@ If the failure involves a release pipeline, check ${PR_DIR}/artifacts/cluster-ar
 Follow the investigation workflow and classification rules in your system prompt.
 Output your analysis as markdown following the specified format."
 
+    local CLAUDE_JSON="${PR_DIR}/claude_output.json"
     claude -p "${PROMPT}" \
-        --output-format text \
+        --output-format json \
         --dangerously-skip-permissions \
         --allowedTools "Read,Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(find*),Bash(gunzip*),Bash(wc*),Bash(file*)" \
         --append-system-prompt-file "${SCRIPT_DIR}/dfd-rules.md" \
         --max-budget-usd 5.00 \
-        > "${PR_DIR}/analysis.md" 2>/dev/null || {
+        > "${CLAUDE_JSON}" 2>/dev/null || {
             warn "[${PR_NAME}] Claude analysis failed"
             printf '%s\n' "# Analysis: ${PR_NAME}" "" "## Summary" "" "- **Root Cause:** unknown" "- **Category:** unknown" "" "Claude analysis failed to complete." > "${PR_DIR}/analysis.md"
+            return
         }
+
+    # Extract analysis text and cost data from JSON output
+    python3 -c "
+import json, sys
+with open('${CLAUDE_JSON}') as f:
+    data = json.load(f)
+for item in data:
+    if item.get('type') == 'result':
+        with open('${PR_DIR}/analysis.md', 'w') as out:
+            out.write(item.get('result', ''))
+        cost = {
+            'invocation': '${PR_NAME}',
+            'cost_usd': item.get('total_cost_usd', 0),
+            'input_tokens': item.get('usage', {}).get('input_tokens', 0),
+            'output_tokens': item.get('usage', {}).get('output_tokens', 0),
+            'cache_read_tokens': item.get('usage', {}).get('cache_read_input_tokens', 0),
+            'cache_creation_tokens': item.get('usage', {}).get('cache_creation_input_tokens', 0),
+            'duration_ms': item.get('duration_api_ms', 0),
+        }
+        with open('${COST_DIR}/${PR_NAME}.json', 'w') as cf:
+            json.dump(cost, cf, indent=2)
+        break
+" 2>/dev/null
+    rm -f "${CLAUDE_JSON}"
 
     log "[${PR_NAME}] Analysis complete."
 }
@@ -626,17 +656,80 @@ For each root_cause category found, create a section:
 ---
 Be concise. Group similar failures. Prioritize by frequency. Do not repeat raw log output."
 
+CONSOLIDATION_JSON="${RUN_DIR}/consolidation_output.json"
 claude -p "${CONSOLIDATION_PROMPT}" \
-    --output-format text \
+    --output-format json \
     --dangerously-skip-permissions \
     --allowedTools "Read,Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(wc*)" \
     --max-budget-usd 5.00 \
-    > "${RUN_DIR}/consolidated-report.md" 2>/dev/null || {
+    > "${CONSOLIDATION_JSON}" 2>/dev/null || {
         err "Consolidation failed"
         echo "# Consolidation Failed" > "${RUN_DIR}/consolidated-report.md"
         echo "" >> "${RUN_DIR}/consolidated-report.md"
         echo "Individual analyses are available in each pipelinerun subdirectory." >> "${RUN_DIR}/consolidated-report.md"
     }
+
+if [[ -f "${CONSOLIDATION_JSON}" ]]; then
+    python3 -c "
+import json
+with open('${CONSOLIDATION_JSON}') as f:
+    data = json.load(f)
+for item in data:
+    if item.get('type') == 'result':
+        with open('${RUN_DIR}/consolidated-report.md', 'w') as out:
+            out.write(item.get('result', ''))
+        cost = {
+            'invocation': 'consolidation',
+            'cost_usd': item.get('total_cost_usd', 0),
+            'input_tokens': item.get('usage', {}).get('input_tokens', 0),
+            'output_tokens': item.get('usage', {}).get('output_tokens', 0),
+            'cache_read_tokens': item.get('usage', {}).get('cache_read_input_tokens', 0),
+            'cache_creation_tokens': item.get('usage', {}).get('cache_creation_input_tokens', 0),
+            'duration_ms': item.get('duration_api_ms', 0),
+        }
+        with open('${COST_DIR}/consolidation.json', 'w') as cf:
+            json.dump(cost, cf, indent=2)
+        break
+" 2>/dev/null
+    rm -f "${CONSOLIDATION_JSON}"
+fi
+
+# =============================================================================
+# Cost Summary
+# =============================================================================
+
+log "=== Cost Summary ==="
+python3 -c "
+import json, glob, os
+
+cost_files = sorted(glob.glob('${COST_DIR}/*.json'))
+if not cost_files:
+    print('  No cost data captured.')
+else:
+    total_cost = 0
+    total_input = 0
+    total_output = 0
+    print()
+    print(f'  {\"Invocation\":<50} {\"Cost (USD)\":>10} {\"Input\":>8} {\"Output\":>8} {\"Duration\":>10}')
+    print(f'  {\"-\" * 50} {\"-\" * 10} {\"-\" * 8} {\"-\" * 8} {\"-\" * 10}')
+    for cf in cost_files:
+        with open(cf) as f:
+            c = json.load(f)
+        name = c['invocation']
+        if len(name) > 48:
+            name = name[:45] + '...'
+        cost = c.get('cost_usd', 0)
+        inp = c.get('input_tokens', 0)
+        out = c.get('output_tokens', 0)
+        dur = c.get('duration_ms', 0)
+        total_cost += cost
+        total_input += inp
+        total_output += out
+        print(f'  {name:<50} \${cost:>9.4f} {inp:>8,} {out:>8,} {dur/1000:>9.1f}s')
+    print(f'  {\"-\" * 50} {\"-\" * 10} {\"-\" * 8} {\"-\" * 8}')
+    print(f'  {\"TOTAL\":<50} \${total_cost:>9.4f} {total_input:>8,} {total_output:>8,}')
+    print()
+" 2>&1 | while IFS= read -r line; do log "${line}"; done
 
 log "=== Investigation Complete ==="
 log "Report: ${RUN_DIR}/consolidated-report.md"
