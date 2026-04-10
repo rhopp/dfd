@@ -254,11 +254,10 @@ import json, sys
 try:
     with open('${COMP_JSON_FILE}') as f:
         data = json.load(f)
-    for entry in data:
-        for run in entry.get('runs', []):
-            pr = run.get('pipelinerun', '')
-            if pr:
-                print(pr)
+    for run in data:
+        pr = run.get('pipelinerun', '')
+        if pr:
+            print(pr)
 except Exception as e:
     print(f'Warning: failed to parse ${COMP_JSON_FILE}: {e}', file=sys.stderr)
 " >> "${KNOWN_PRS_FILE}" 2>/dev/null
