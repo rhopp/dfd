@@ -631,11 +631,14 @@ for RETRY in $(seq 1 ${MAX_VALIDATION_RETRIES}); do
         [[ ! -f "${ANALYSIS_FILE}" ]] && continue
 
         ROOT_CAUSE=$(extract_root_cause "${ANALYSIS_FILE}")
-        [[ -z "${ROOT_CAUSE}" ]] && continue
 
         # Check if root_cause is in the valid set for this component
         VALID=$(get_valid_root_causes "${COMP}")
-        if ! echo "${VALID}" | grep -qxF "${ROOT_CAUSE}"; then
+        if [[ -z "${ROOT_CAUSE}" ]]; then
+            log "[${PR_NAME}] No root_cause found in analysis (wrong format?) (retry ${RETRY}/${MAX_VALIDATION_RETRIES})"
+            INVALID_PRS="${INVALID_PRS}${LINE}\n"
+            INVALID_COUNT=$((INVALID_COUNT + 1))
+        elif ! echo "${VALID}" | grep -qxF "${ROOT_CAUSE}"; then
             log "[${PR_NAME}] Invalid root_cause: '${ROOT_CAUSE}' (retry ${RETRY}/${MAX_VALIDATION_RETRIES})"
             INVALID_PRS="${INVALID_PRS}${LINE}\n"
             INVALID_COUNT=$((INVALID_COUNT + 1))
@@ -674,10 +677,12 @@ while IFS= read -r LINE; do
     [[ ! -f "${ANALYSIS_FILE}" ]] && continue
 
     ROOT_CAUSE=$(extract_root_cause "${ANALYSIS_FILE}")
-    [[ -z "${ROOT_CAUSE}" ]] && continue
-
     VALID=$(get_valid_root_causes "${COMP}")
-    if ! echo "${VALID}" | grep -qxF "${ROOT_CAUSE}"; then
+
+    if [[ -z "${ROOT_CAUSE}" ]]; then
+        log "[${PR_NAME}] Forcing analysis to 'unknown' (unparseable format) after ${MAX_VALIDATION_RETRIES} retries"
+        printf '%s\n' "# Analysis: ${PR_NAME}" "" "## Summary" "" "- **Root Cause:** \`unknown\`" "- **Category:** \`unknown\`" "" "Agent produced unparseable analysis format after ${MAX_VALIDATION_RETRIES} retries." > "${ANALYSIS_FILE}"
+    elif ! echo "${VALID}" | grep -qxF "${ROOT_CAUSE}"; then
         log "[${PR_NAME}] Forcing invalid root_cause '${ROOT_CAUSE}' -> 'unknown' after ${MAX_VALIDATION_RETRIES} retries"
         sed -i -E "s/(\*\*Root Cause:?\*\*:?\s*).+/\1\`unknown\`/" "${ANALYSIS_FILE}"
         sed -i -E "s/(\*\*Category:?\*\*:?\s*).+/\1\`unknown\`/" "${ANALYSIS_FILE}"
