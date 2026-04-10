@@ -263,7 +263,7 @@ if [[ -n "${PAGES_BASE_URL:-}" ]]; then
         COMP_JSON_FILE="${RUN_DIR}/known_${COMP}.json"
 
         log "[${COMP}] Downloading published data for dedup from ${COMP_JSON_URL}..."
-        HTTP_CODE=$(curl -sL -o "${COMP_JSON_FILE}" -w "%{http_code}" "${COMP_JSON_URL}" 2>/dev/null || echo "000")
+        HTTP_CODE=$(curl -skL -o "${COMP_JSON_FILE}" -w "%{http_code}" "${COMP_JSON_URL}" 2>/dev/null || echo "000")
         if [[ "${HTTP_CODE}" == "200" ]]; then
             python3 -c "
 import json, sys
