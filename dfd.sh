@@ -271,7 +271,7 @@ try:
     for run in data:
         pr = run.get('pipelinerun', '')
         if pr:
-            print(pr)
+            print('${COMP}|' + pr)
 except Exception as e:
     print(f'Warning: failed to parse ${COMP_JSON_FILE}: {e}', file=sys.stderr)
 " >> "${KNOWN_PRS_FILE}" 2>/dev/null
@@ -295,8 +295,8 @@ with open('${FAILED_PRS_FILE}') as f:
         line = line.strip()
         if not line:
             continue
-        pr_name = line.split('|', 1)[1] if '|' in line else line
-        if pr_name in known:
+        # Line format is component|pipelinerun — match against component|pipelinerun in known set
+        if line in known:
             skipped += 1
         else:
             kept.append(line)
