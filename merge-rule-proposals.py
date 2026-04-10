@@ -63,32 +63,35 @@ Respond with ONLY the normalized JSON object. No markdown, no explanation."""
 
     try:
         result = subprocess.run(
-            ["claude", "-p", prompt, "--output-format", "json", "--max-budget-usd", "0.20"],
+            ["claude", "-p", prompt, "--output-format", "text", "--max-budget-usd", "0.20"],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=120,
         )
 
         if result.returncode != 0:
             print(f"  WARNING: Claude normalization failed (exit {result.returncode})")
+            print(f"  stderr: {result.stderr[:500]}")
             return data
 
-        output = json.loads(result.stdout)
-        for item in output:
-            if item.get("type") == "result":
-                result_text = item.get("result", "").strip()
-                if result_text.startswith("```"):
-                    result_text = re.sub(r"^```\w*\n?", "", result_text)
-                    result_text = re.sub(r"\n?```$", "", result_text)
-                normalized = json.loads(result_text)
-                print(f"  Normalized successfully: root_cause={normalized.get('root_cause', '?')}")
-                return normalized
+        result_text = result.stdout.strip()
+        # Strip markdown code fences if present
+        if result_text.startswith("```"):
+            result_text = re.sub(r"^```\w*\n?", "", result_text)
+            result_text = re.sub(r"\n?```$", "", result_text)
+        normalized = json.loads(result_text)
+        print(f"  Normalized successfully: root_cause={normalized.get('root_cause', '?')}")
+        return normalized
 
-        print(f"  WARNING: Could not parse Claude normalization output")
+    except subprocess.TimeoutExpired:
+        print(f"  WARNING: Claude normalization timed out")
         return data
-
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
-        print(f"  WARNING: Claude normalization error ({e})")
+    except json.JSONDecodeError as e:
+        print(f"  WARNING: Claude normalization JSON parse error: {e}")
+        print(f"  stdout (first 500 chars): {result.stdout[:500]}")
+        return data
+    except Exception as e:
+        print(f"  WARNING: Claude normalization error: {type(e).__name__}: {e}")
         return data
 
 
@@ -193,7 +196,7 @@ Do not add any other text, explanation, or markdown formatting. Just the JSON ar
 
     try:
         result = subprocess.run(
-            ["claude", "-p", prompt, "--output-format", "json", "--max-budget-usd", "0.50"],
+            ["claude", "-p", prompt, "--output-format", "text", "--max-budget-usd", "0.50"],
             capture_output=True,
             text=True,
             timeout=120,
@@ -203,24 +206,24 @@ Do not add any other text, explanation, or markdown formatting. Just the JSON ar
             print(f"WARNING: Claude dedup failed (exit {result.returncode}), using all proposals")
             return proposals
 
-        # Parse Claude's JSON output format
-        output = json.loads(result.stdout)
-        for item in output:
-            if item.get("type") == "result":
-                result_text = item.get("result", "").strip()
-                # Strip markdown code fences if present
-                if result_text.startswith("```"):
-                    result_text = re.sub(r"^```\w*\n?", "", result_text)
-                    result_text = re.sub(r"\n?```$", "", result_text)
-                deduped = json.loads(result_text)
-                print(f"Claude dedup: {len(proposals)} proposals -> {len(deduped)} unique")
-                return deduped
+        result_text = result.stdout.strip()
+        # Strip markdown code fences if present
+        if result_text.startswith("```"):
+            result_text = re.sub(r"^```\w*\n?", "", result_text)
+            result_text = re.sub(r"\n?```$", "", result_text)
+        deduped = json.loads(result_text)
+        print(f"Claude dedup: {len(proposals)} proposals -> {len(deduped)} unique")
+        return deduped
 
-        print("WARNING: Could not parse Claude output, using all proposals")
+    except subprocess.TimeoutExpired:
+        print("WARNING: Claude dedup timed out, using all proposals")
         return proposals
-
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
-        print(f"WARNING: Claude dedup error ({e}), using all proposals")
+    except json.JSONDecodeError as e:
+        print(f"WARNING: Claude dedup JSON parse error: {e}")
+        print(f"  stdout (first 500 chars): {result.stdout[:500]}")
+        return proposals
+    except Exception as e:
+        print(f"WARNING: Claude dedup error ({type(e).__name__}: {e}), using all proposals")
         return proposals
 
 
