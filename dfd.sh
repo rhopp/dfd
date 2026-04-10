@@ -416,7 +416,7 @@ while IFS= read -r LINE; do
     [[ -z "${LINE}" ]] && continue
     COMP="${LINE%%|*}"
     PR_NAME="${LINE#*|}"
-    collect_pr_data "${COMP}" "${PR_NAME}" &
+    collect_pr_data "${COMP}" "${PR_NAME}" < /dev/null &
     JOBS_RUNNING=$((JOBS_RUNNING + 1))
 
     if [[ ${JOBS_RUNNING} -ge ${MAX_PARALLEL} ]]; then
@@ -508,7 +508,7 @@ JOBS_RUNNING=0
 while IFS= read -r LINE; do
     [[ -z "${LINE}" ]] && continue
     PR_NAME="${LINE#*|}"
-    analyze_pr "${PR_NAME}" &
+    analyze_pr "${PR_NAME}" < /dev/null &
     JOBS_RUNNING=$((JOBS_RUNNING + 1))
 
     if [[ ${JOBS_RUNNING} -ge ${MAX_PARALLEL} ]]; then
