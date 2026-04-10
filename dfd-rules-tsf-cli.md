@@ -33,6 +33,7 @@
 | `test_flake` | test_flake | Test fails intermittently with no clear infra cause |
 | **Agent-Discovered Patterns** | | |
 | `integration_test_ec_policy_violation` | infrastructure | Integration test pipelinerun name matches `enterprise-contract` pipeline AND TaskRun verify step-assert fails with TEST_OUTPUT containing `"result":"FAILURE"` AND violations array is non-empty |
+| `e2e_test_compilation_failure` | infrastructure | E2e test fails during test binary compilation due to Go module dependency version conflicts or interface incompatibilities |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -55,4 +56,5 @@ Apply these in order — first match wins:
 10. If component creation test + timeout -> `component_creation_timeout`
 11. If `[INTERRUPTED] by User` (global timeout) -> `build_timeout`
 12. If test is `should eventually complete successfully` (integration test) AND pipelinerun is `enterprise-contract` AND step-assert fails with EC violations -> `integration_test_ec_policy_violation`
-13. Otherwise -> `unknown`
+13. If e2e/integration test fails AND step log contains 'go test -c' OR 'make build' AND compilation errors mention interface type mismatches or 'does not implement' OR 'cannot use .* as .* value in return statement' -> e2e_test_compilation_failure
+14. Otherwise -> `unknown`
