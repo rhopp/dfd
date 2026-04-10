@@ -32,6 +32,7 @@
 | **Other** | | |
 | `test_flake` | test_flake | Test fails intermittently with no clear infra cause |
 | **Agent-Discovered Patterns** | | |
+| `integration_test_ec_policy_violation` | infrastructure | Integration test pipelinerun name matches `enterprise-contract` pipeline AND TaskRun verify step-assert fails with TEST_OUTPUT containing `"result":"FAILURE"` AND violations array is non-empty |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -53,4 +54,5 @@ Apply these in order — first match wins:
 9. If test mentions `ArgoCDSyncError` -> `deployment_argocd_sync`
 10. If component creation test + timeout -> `component_creation_timeout`
 11. If `[INTERRUPTED] by User` (global timeout) -> `build_timeout`
-12. Otherwise -> `unknown`
+12. If test is `should eventually complete successfully` (integration test) AND pipelinerun is `enterprise-contract` AND step-assert fails with EC violations -> `integration_test_ec_policy_violation`
+13. Otherwise -> `unknown`
