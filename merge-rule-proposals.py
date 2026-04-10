@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Merge agent rule proposals into dfd-rules.md.
+"""Merge agent rule proposals into per-component rule files.
 
 After Phase 2 agents analyze failures, those that classify as "unknown" may
 write rule_proposal.json files suggesting new taxonomy entries. This script
 collects those proposals, validates them, deduplicates (using Claude for
-semantic dedup when there are multiple proposals), and inserts new entries
-into dfd-rules.md.
+semantic dedup when there are multiple proposals for the same component),
+and inserts new entries into the appropriate dfd-rules-{component}.md file.
 
 Usage:
     python3 merge-rule-proposals.py \
         --runs-dir runs/2026-04-10 \
-        --rules-file dfd-rules.md \
-        --output dfd-rules.md
+        --rules-dir .
 
 Exit codes:
     0 — success (rules may or may not have been updated)
@@ -25,6 +24,7 @@ import os
 import re
 import subprocess
 import sys
+from collections import defaultdict
 
 
 REQUIRED_FIELDS = ["root_cause", "category", "error_signature", "priority_rule", "reasoning"]
@@ -32,7 +32,7 @@ ROOT_CAUSE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{2,50}$")
 
 
 def find_proposals(runs_dir):
-    """Find and load all rule_proposal.json files."""
+    """Find and load all rule_proposal.json files, enriching with component from metadata.json."""
     proposals = []
     pattern = os.path.join(runs_dir, "*", "rule_proposal.json")
     for path in sorted(glob.glob(pattern)):
@@ -40,9 +40,20 @@ def find_proposals(runs_dir):
             with open(path) as f:
                 data = json.load(f)
             data["_source_file"] = path
+
+            # Read component from sibling metadata.json
+            pr_dir = os.path.dirname(path)
+            metadata_path = os.path.join(pr_dir, "metadata.json")
+            if os.path.exists(metadata_path):
+                with open(metadata_path) as mf:
+                    metadata = json.load(mf)
+                data["_component"] = metadata.get("component", "unknown")
+            else:
+                data["_component"] = "unknown"
+
             proposals.append(data)
         except (json.JSONDecodeError, IOError) as e:
-            print(f"WARNING: Skipping invalid proposal {path}: {e}", file=sys.stderr)
+            print(f"WARNING: Skipping invalid proposal {path}: {e}")
     return proposals
 
 
@@ -126,7 +137,7 @@ Do not add any other text, explanation, or markdown formatting. Just the JSON ar
         )
 
         if result.returncode != 0:
-            print(f"WARNING: Claude dedup failed (exit {result.returncode}), using all proposals", file=sys.stderr)
+            print(f"WARNING: Claude dedup failed (exit {result.returncode}), using all proposals")
             return proposals
 
         # Parse Claude's JSON output format
@@ -139,14 +150,14 @@ Do not add any other text, explanation, or markdown formatting. Just the JSON ar
                     result_text = re.sub(r"^```\w*\n?", "", result_text)
                     result_text = re.sub(r"\n?```$", "", result_text)
                 deduped = json.loads(result_text)
-                print(f"Claude dedup: {len(proposals)} proposals -> {len(deduped)} unique", file=sys.stderr)
+                print(f"Claude dedup: {len(proposals)} proposals -> {len(deduped)} unique")
                 return deduped
 
-        print("WARNING: Could not parse Claude output, using all proposals", file=sys.stderr)
+        print("WARNING: Could not parse Claude output, using all proposals")
         return proposals
 
     except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
-        print(f"WARNING: Claude dedup error ({e}), using all proposals", file=sys.stderr)
+        print(f"WARNING: Claude dedup error ({e}), using all proposals")
         return proposals
 
 
@@ -192,11 +203,58 @@ def insert_priority_rules(rules_text, new_rules):
     return "\n".join(result)
 
 
+def process_component(component, proposals, rules_file):
+    """Process proposals for a single component, updating its rules file."""
+    print(f"\n=== Processing {component} ({len(proposals)} proposal(s)) ===")
+
+    # Read existing rules
+    if os.path.exists(rules_file):
+        with open(rules_file) as f:
+            rules_text = f.read()
+    else:
+        print(f"  Rules file {rules_file} does not exist, skipping")
+        return False
+
+    existing = extract_existing_root_causes(rules_text)
+    print(f"  Existing taxonomy has {len(existing)} root causes.")
+
+    # Deduplicate against existing rules
+    novel = [p for p in proposals if p["root_cause"] not in existing]
+    skipped = len(proposals) - len(novel)
+    if skipped > 0:
+        print(f"  Skipped {skipped} proposal(s) that duplicate existing rules.")
+
+    if not novel:
+        print(f"  No new rules for {component}.")
+        return False
+
+    # Semantic dedup across proposals (uses Claude if 2+)
+    deduped = deduplicate_with_claude(novel, existing)
+
+    # Final check
+    final = [p for p in deduped if p["root_cause"] not in existing]
+    if not final:
+        print(f"  No new rules after deduplication.")
+        return False
+
+    # Insert into taxonomy table and priority rules
+    rules_text = insert_taxonomy_rows(rules_text, final)
+    rules_text = insert_priority_rules(rules_text, final)
+
+    # Write
+    with open(rules_file, "w") as f:
+        f.write(rules_text)
+
+    print(f"  Added {len(final)} new rule(s) to {rules_file}:")
+    for p in final:
+        print(f"    + {p['root_cause']} ({p['category']}): {p['error_signature']}")
+    return True
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Merge rule proposals into dfd-rules.md")
+    parser = argparse.ArgumentParser(description="Merge rule proposals into per-component rule files")
     parser.add_argument("--runs-dir", required=True, help="Path to the runs directory")
-    parser.add_argument("--rules-file", required=True, help="Path to dfd-rules.md")
-    parser.add_argument("--output", required=True, help="Output path for updated rules file")
+    parser.add_argument("--rules-dir", required=True, help="Directory containing dfd-rules-{component}.md files")
     args = parser.parse_args()
 
     # 1. Find proposals
@@ -207,61 +265,38 @@ def main():
 
     print(f"Found {len(proposals)} proposal(s):")
     for p in proposals:
-        print(f"  - {p['root_cause']} from {p.get('_source_file', '?')}")
+        print(f"  - {p['root_cause']} ({p['_component']}) from {p.get('_source_file', '?')}")
 
     # 2. Validate
-    valid_proposals = []
+    valid = []
     for p in proposals:
         is_valid, error = validate_proposal(p)
         if is_valid:
-            valid_proposals.append(p)
+            valid.append(p)
         else:
             print(f"  SKIPPED (invalid): {p.get('root_cause', '?')} — {error}")
 
-    if not valid_proposals:
+    if not valid:
         print("No valid proposals after validation.")
         return
 
-    # 3. Read existing rules
-    with open(args.rules_file) as f:
-        rules_text = f.read()
+    # 3. Group by component
+    by_component = defaultdict(list)
+    for p in valid:
+        by_component[p["_component"]].append(p)
 
-    existing = extract_existing_root_causes(rules_text)
-    print(f"Existing taxonomy has {len(existing)} root causes.")
+    # 4. Process each component
+    any_updated = False
+    for component, comp_proposals in sorted(by_component.items()):
+        rules_file = os.path.join(args.rules_dir, f"dfd-rules-{component}.md")
+        updated = process_component(component, comp_proposals, rules_file)
+        if updated:
+            any_updated = True
 
-    # 4. Deduplicate against existing rules
-    novel_proposals = [p for p in valid_proposals if p["root_cause"] not in existing]
-    skipped = len(valid_proposals) - len(novel_proposals)
-    if skipped > 0:
-        print(f"  Skipped {skipped} proposal(s) that duplicate existing rules.")
-
-    if not novel_proposals:
-        print("No new rules to add (all proposals duplicate existing rules).")
-        return
-
-    # 5. Semantic dedup across proposals (uses Claude if 2+)
-    deduped = deduplicate_with_claude(novel_proposals, existing)
-
-    # Final check: make sure deduped entries don't match existing rules
-    final_proposals = [p for p in deduped if p["root_cause"] not in existing]
-
-    if not final_proposals:
-        print("No new rules after deduplication.")
-        return
-
-    # 6. Insert into taxonomy table
-    rules_text = insert_taxonomy_rows(rules_text, final_proposals)
-
-    # 7. Insert into priority rules
-    rules_text = insert_priority_rules(rules_text, final_proposals)
-
-    # 8. Write output
-    with open(args.output, "w") as f:
-        f.write(rules_text)
-
-    print(f"\nAdded {len(final_proposals)} new rule(s) to {args.output}:")
-    for p in final_proposals:
-        print(f"  + {p['root_cause']} ({p['category']}): {p['error_signature']}")
+    if not any_updated:
+        print("\nNo rule files were updated.")
+    else:
+        print("\nRule files updated successfully.")
 
 
 if __name__ == "__main__":

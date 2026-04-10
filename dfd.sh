@@ -436,7 +436,8 @@ COST_DIR="${RUN_DIR}/cost"
 mkdir -p "${COST_DIR}"
 
 analyze_pr() {
-    local PR_NAME="$1"
+    local COMP="$1"
+    local PR_NAME="$2"
     local PR_DIR="${RUN_DIR}/${PR_NAME}"
 
     if [[ ! -f "${PR_DIR}/metadata.json" ]]; then
@@ -469,6 +470,7 @@ If you classify the failure as unknown but discover a new recognizable pattern, 
         --dangerously-skip-permissions \
         --allowedTools "Read,Write(${PR_DIR}/rule_proposal.json),Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(find*),Bash(gunzip*),Bash(wc*),Bash(file*),Bash(grep*)" \
         --append-system-prompt-file "${SCRIPT_DIR}/dfd-rules.md" \
+        --append-system-prompt-file "${SCRIPT_DIR}/dfd-rules-${COMP}.md" \
         --max-budget-usd 5.00 \
         > "${CLAUDE_JSON}" 2> "${PR_DIR}/claude_stderr.log" || {
             warn "[${PR_NAME}] Claude analysis failed (exit code $?)"
@@ -507,8 +509,9 @@ for item in data:
 JOBS_RUNNING=0
 while IFS= read -r LINE; do
     [[ -z "${LINE}" ]] && continue
+    COMP="${LINE%%|*}"
     PR_NAME="${LINE#*|}"
-    analyze_pr "${PR_NAME}" < /dev/null &
+    analyze_pr "${COMP}" "${PR_NAME}" < /dev/null &
     JOBS_RUNNING=$((JOBS_RUNNING + 1))
 
     if [[ ${JOBS_RUNNING} -ge ${MAX_PARALLEL} ]]; then
@@ -530,8 +533,7 @@ if [[ "${PROPOSALS_FOUND}" -gt 0 ]]; then
     log "Found ${PROPOSALS_FOUND} rule proposal(s). Merging into dfd-rules.md..."
     python3 "${SCRIPT_DIR}/merge-rule-proposals.py" \
         --runs-dir "${RUN_DIR}" \
-        --rules-file "${SCRIPT_DIR}/dfd-rules.md" \
-        --output "${SCRIPT_DIR}/dfd-rules.md" \
+        --rules-dir "${SCRIPT_DIR}" \
         2>&1 | while IFS= read -r line; do log "[rules-merge] ${line}"; done
 else
     log "No rule proposals found. Taxonomy unchanged."
