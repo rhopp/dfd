@@ -540,6 +540,52 @@ else
 fi
 
 # =============================================================================
+# Phase 2.6: Re-analyze unknowns with updated taxonomy
+# =============================================================================
+
+# Find analyses still classified as unknown and re-run them with the updated rules
+UNKNOWN_PRS=""
+UNKNOWN_COUNT=0
+while IFS= read -r LINE; do
+    [[ -z "${LINE}" ]] && continue
+    PR_NAME="${LINE#*|}"
+    COMP="${LINE%%|*}"
+    ANALYSIS_FILE="${RUN_DIR}/${PR_NAME}/analysis.md"
+    if [[ -f "${ANALYSIS_FILE}" ]]; then
+        # Check if root_cause is unknown (any variation)
+        if grep -qiP '\*\*Root Cause:?\*\*:?\s*`?unknown' "${ANALYSIS_FILE}" 2>/dev/null; then
+            UNKNOWN_PRS="${UNKNOWN_PRS}${LINE}\n"
+            UNKNOWN_COUNT=$((UNKNOWN_COUNT + 1))
+        fi
+    fi
+done < "${FAILED_PRS_FILE}"
+
+if [[ ${UNKNOWN_COUNT} -gt 0 ]]; then
+    log "=== Phase 2.6: Re-analyzing ${UNKNOWN_COUNT} unknown(s) with updated taxonomy ==="
+    JOBS_RUNNING=0
+    while IFS= read -r LINE; do
+        [[ -z "${LINE}" ]] && continue
+        COMP="${LINE%%|*}"
+        PR_NAME="${LINE#*|}"
+        PR_DIR="${RUN_DIR}/${PR_NAME}"
+        # Remove old analysis so analyze_pr will re-run
+        rm -f "${PR_DIR}/analysis.md"
+        log "[${PR_NAME}] Re-analyzing (was unknown)..."
+        analyze_pr "${COMP}" "${PR_NAME}" < /dev/null &
+        JOBS_RUNNING=$((JOBS_RUNNING + 1))
+
+        if [[ ${JOBS_RUNNING} -ge ${MAX_PARALLEL} ]]; then
+            wait -n 2>/dev/null || wait
+            JOBS_RUNNING=$((JOBS_RUNNING - 1))
+        fi
+    done < <(printf "${UNKNOWN_PRS}")
+    wait
+    log "Phase 2.6 complete."
+else
+    log "No unknown classifications — skipping Phase 2.6 re-analysis."
+fi
+
+# =============================================================================
 # Phase 3: Consolidation
 # =============================================================================
 

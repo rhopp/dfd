@@ -109,7 +109,13 @@ If you reach the `unknown` classification after exhausting all rules above, you 
    `proposed_root_cause`, `description`, `detection_logic`, `example_signature`, etc.
    The merge script will reject proposals with wrong field names.
 
-   Then use the proposed `root_cause` and `category` in your analysis output (not `unknown`).
+   **CRITICAL**: After writing a rule proposal, you MUST use the proposed `root_cause` ID
+   and `category` in your analysis output `## Summary` section. Do NOT write `unknown`,
+   `unknown (with new pattern identified)`, or any other variation. Write the exact
+   `snake_case_id` from your proposal as the Root Cause value. Example:
+   - **Root Cause:** `e2e_test_compilation_failure`  ← correct
+   - **Root Cause:** `unknown`  ← WRONG if you proposed a rule
+   - **Root Cause:** `unknown (with new pattern identified)`  ← WRONG
 
 4. **Do NOT propose a new rule if**:
    - The failure is a one-off fluke (classify as `test_flake` instead)
