@@ -435,6 +435,33 @@ log "=== Phase 2: Per-Failure Analysis ==="
 COST_DIR="${RUN_DIR}/cost"
 mkdir -p "${COST_DIR}"
 
+# Extract root_cause value from an analysis.md file (returns empty if not found)
+extract_root_cause() {
+    local ANALYSIS_FILE="$1"
+    python3 -c "
+import re
+with open('${ANALYSIS_FILE}') as f:
+    text = f.read()
+m = re.search(r'\*\*Root Cause:?\*\*:?\s*(.+?)(?:\n|$)', text)
+if m:
+    print(m.group(1).strip().strip('\`'))
+" 2>/dev/null
+}
+
+# Get set of valid root_cause IDs from a component's rule file (one per line)
+get_valid_root_causes() {
+    local COMP="$1"
+    local RULES_FILE="${SCRIPT_DIR}/dfd-rules-${COMP}.md"
+    python3 -c "
+import re
+with open('${RULES_FILE}') as f:
+    for line in f:
+        m = re.match(r'\|\s*\x60(\w+)\x60\s*\|', line)
+        if m:
+            print(m.group(1))
+" 2>/dev/null
+}
+
 analyze_pr() {
     local COMP="$1"
     local PR_NAME="$2"
@@ -584,6 +611,80 @@ if [[ ${UNKNOWN_COUNT} -gt 0 ]]; then
 else
     log "No unknown classifications — skipping Phase 2.6 re-analysis."
 fi
+
+# =============================================================================
+# Phase 2.7: Root Cause Validation Loop
+# =============================================================================
+
+MAX_VALIDATION_RETRIES=2
+log "=== Phase 2.7: Root Cause Validation ==="
+
+for RETRY in $(seq 1 ${MAX_VALIDATION_RETRIES}); do
+    INVALID_PRS=""
+    INVALID_COUNT=0
+
+    while IFS= read -r LINE; do
+        [[ -z "${LINE}" ]] && continue
+        COMP="${LINE%%|*}"
+        PR_NAME="${LINE#*|}"
+        ANALYSIS_FILE="${RUN_DIR}/${PR_NAME}/analysis.md"
+        [[ ! -f "${ANALYSIS_FILE}" ]] && continue
+
+        ROOT_CAUSE=$(extract_root_cause "${ANALYSIS_FILE}")
+        [[ -z "${ROOT_CAUSE}" ]] && continue
+
+        # Check if root_cause is in the valid set for this component
+        VALID=$(get_valid_root_causes "${COMP}")
+        if ! echo "${VALID}" | grep -qxF "${ROOT_CAUSE}"; then
+            log "[${PR_NAME}] Invalid root_cause: '${ROOT_CAUSE}' (retry ${RETRY}/${MAX_VALIDATION_RETRIES})"
+            INVALID_PRS="${INVALID_PRS}${LINE}\n"
+            INVALID_COUNT=$((INVALID_COUNT + 1))
+        fi
+    done < "${FAILED_PRS_FILE}"
+
+    if [[ ${INVALID_COUNT} -eq 0 ]]; then
+        log "All root_cause values are valid."
+        break
+    fi
+
+    log "Found ${INVALID_COUNT} invalid root_cause(s). Re-analyzing (attempt ${RETRY}/${MAX_VALIDATION_RETRIES})..."
+    JOBS_RUNNING=0
+    while IFS= read -r LINE; do
+        [[ -z "${LINE}" ]] && continue
+        COMP="${LINE%%|*}"
+        PR_NAME="${LINE#*|}"
+        rm -f "${RUN_DIR}/${PR_NAME}/analysis.md"
+        analyze_pr "${COMP}" "${PR_NAME}" < /dev/null &
+        JOBS_RUNNING=$((JOBS_RUNNING + 1))
+
+        if [[ ${JOBS_RUNNING} -ge ${MAX_PARALLEL} ]]; then
+            wait -n 2>/dev/null || wait
+            JOBS_RUNNING=$((JOBS_RUNNING - 1))
+        fi
+    done < <(printf "${INVALID_PRS}")
+    wait
+done
+
+# Force any remaining invalid root_causes to "unknown"
+while IFS= read -r LINE; do
+    [[ -z "${LINE}" ]] && continue
+    COMP="${LINE%%|*}"
+    PR_NAME="${LINE#*|}"
+    ANALYSIS_FILE="${RUN_DIR}/${PR_NAME}/analysis.md"
+    [[ ! -f "${ANALYSIS_FILE}" ]] && continue
+
+    ROOT_CAUSE=$(extract_root_cause "${ANALYSIS_FILE}")
+    [[ -z "${ROOT_CAUSE}" ]] && continue
+
+    VALID=$(get_valid_root_causes "${COMP}")
+    if ! echo "${VALID}" | grep -qxF "${ROOT_CAUSE}"; then
+        log "[${PR_NAME}] Forcing invalid root_cause '${ROOT_CAUSE}' -> 'unknown' after ${MAX_VALIDATION_RETRIES} retries"
+        sed -i -E "s/(\*\*Root Cause:?\*\*:?\s*).+/\1\`unknown\`/" "${ANALYSIS_FILE}"
+        sed -i -E "s/(\*\*Category:?\*\*:?\s*).+/\1\`unknown\`/" "${ANALYSIS_FILE}"
+    fi
+done < "${FAILED_PRS_FILE}"
+
+log "Phase 2.7 complete."
 
 # =============================================================================
 # Phase 3: Consolidation
