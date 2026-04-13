@@ -32,6 +32,7 @@
 | **Other** | | |
 | `test_flake` | test_flake | Test fails intermittently with no clear infra cause |
 | **Agent-Discovered Patterns** | | |
+| `component_creation_github_404` | infrastructure | Component creation fails when publishing repository to GitHub with 404 Not Found error |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -53,4 +54,5 @@ Apply these in order — first match wins:
 9. If test mentions `ArgoCDSyncError` -> `deployment_argocd_sync`
 10. If component creation test + timeout -> `component_creation_timeout`
 11. If `[INTERRUPTED] by User` (global timeout) -> `build_timeout`
-12. Otherwise -> `unknown`
+12. If component creation fails AND error contains '404 Not Found' AND step name contains 'Publish' AND 'GitHub' -> component_creation_github_404
+13. Otherwise -> `unknown`
