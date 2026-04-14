@@ -60,10 +60,15 @@ COMPONENT_PR_PREFIXES[tssc-test]="e2e-"
 COMPONENT_ORAS_REPOS[tssc-test]="quay.io/konflux-test-storage/rhtap-team/rhtap-cli"
 COMPONENT_DISPLAY_NAMES[tssc-test]="TSSC Test"
 
+COMPONENT_LABELS[tssc-dev-multi-ci]="appstudio.openshift.io/component=rhtap-task-runner"
+COMPONENT_PR_PREFIXES[tssc-dev-multi-ci]="e2e-"
+COMPONENT_ORAS_REPOS[tssc-dev-multi-ci]="quay.io/konflux-test-storage/rhtap-team/rhtap-cli"
+COMPONENT_DISPLAY_NAMES[tssc-dev-multi-ci]="TSSC Dev Multi CI"
+
 # Validate component names
 for comp in "${COMPONENTS[@]}"; do
     if [[ -z "${COMPONENT_LABELS[$comp]:-}" ]]; then
-        echo "ERROR: Unknown component '$comp'. Valid components: tsf-cli, tssc-cli, tssc-test" >&2
+        echo "ERROR: Unknown component '$comp'. Valid components: tsf-cli, tssc-cli, tssc-test, tssc-dev-multi-ci" >&2
         exit 1
     fi
 done
