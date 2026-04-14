@@ -110,12 +110,9 @@ If you reach the `unknown` classification after exhausting all rules above, you 
    The merge script will reject proposals with wrong field names.
 
    **CRITICAL**: After writing a rule proposal, you MUST use the proposed `root_cause` ID
-   and `category` in your analysis output `## Summary` section. Do NOT write `unknown`,
+   and `category` in your analysis output. Do NOT write `unknown`,
    `unknown (with new pattern identified)`, or any other variation. Write the exact
-   `snake_case_id` from your proposal as the Root Cause value. Example:
-   - **Root Cause:** `e2e_test_compilation_failure`  ← correct
-   - **Root Cause:** `unknown`  ← WRONG if you proposed a rule
-   - **Root Cause:** `unknown (with new pattern identified)`  ← WRONG
+   `snake_case_id` from your proposal as the `root_cause` value.
 
 4. **Do NOT propose a new rule if**:
    - The failure is a one-off fluke (classify as `test_flake` instead)
@@ -125,85 +122,19 @@ If you reach the `unknown` classification after exhausting all rules above, you 
 
 ## Output Format
 
-Write your analysis as markdown with **exactly** this structure. Do NOT rename sections,
-reorder fields, move colons outside `**`, or add extra sections. The output is parsed by a
-downstream script that depends on the exact format below.
+Your output is captured as structured JSON via a schema. Each field is described below:
 
-```markdown
-# Analysis: {pipelinerun-name}
-
-## Summary
-
-- **Root Cause:** `{root_cause_id}`
-- **Category:** `{category}`
-- **Component:** `{component from metadata.json}`
-- **Failed Task:** `{task name}`
-- **Failed Step:** `{step name}`
-- **Completion Time:** {timestamp}
-
-## Failed Test
-
-- **Test Name:** {Ginkgo test name or "N/A" if not a test failure}
-- **Error Message:** {one-line error}
-
-## Evidence
-
-```
-{Key log lines or error output that led to the classification. Include 5-15 relevant lines.}
-```
-
-## Details
-
-{1-3 sentences explaining what happened and why it was classified this way.
-If a release pipeline failure, include the managed pipelinerun name and which task/step failed in it.}
-
-## Suggested Action
-
-{1-2 sentences on what to investigate or fix.}
-```
-
-### Formatting rules (IMPORTANT — output is machine-parsed)
-
-- Section headers must be exactly `## Summary`, `## Failed Test`, `## Evidence`, `## Details`, `## Suggested Action`
-- Each Summary field must be on its own line as `- **Field Name:** value` — colon INSIDE the bold markers
-- Root Cause and Category values must use backtick-wrapped taxonomy IDs: `- **Root Cause:** \`rosa_provisioning_failure\``
-- Do NOT use `### Classification` or any other heading variations
-- Do NOT put the colon outside bold like `**Root Cause**: value` — it must be `**Root Cause:** value`
-
-### Example output
-
-```markdown
-# Analysis: e2e-4.19-x5f2n
-
-## Summary
-
-- **Root Cause:** `rosa_provisioning_failure`
-- **Category:** `infrastructure`
-- **Component:** `tssc-cli`
-- **Failed Task:** `provision-rosa`
-- **Failed Step:** `provision`
-- **Completion Time:** 2026-04-09T16:54:38Z
-
-## Failed Test
-
-- **Test Name:** N/A
-- **Error Message:** ROSA cluster provisioning timed out
-
-## Evidence
-
-```
-ERR: Cluster 'kx-6207678ac4' is not yet ready
-certificate request has failed: 404 urn:ietf:params:acme:error:malformed
-```
-
-## Details
-
-ROSA cluster provisioning failed due to a certificate error during cluster initialization.
-
-## Suggested Action
-
-Retry the pipeline. If recurring, investigate ACME certificate provisioning in the target region.
-```
+- **root_cause** — A `snake_case` taxonomy ID from the classification rules (e.g. `rosa_provisioning_failure`, `release_quay_auth`, `unknown`). Must be a valid ID from the taxonomy table for the component.
+- **category** — The category from the taxonomy table (e.g. `infrastructure`, `test_flake`, `unknown`).
+- **component** — The component identifier from `metadata.json` (e.g. `tsf-cli`, `tssc-cli`, `tssc-test`).
+- **failed_task** — Name of the failed Tekton task (e.g. `run-tsf-e2e`, `provision-rosa`).
+- **failed_step** — Name of the failed step within the task.
+- **completion_time** — ISO 8601 timestamp of pipelinerun completion from `metadata.json`.
+- **test_name** — The Ginkgo test name that failed, or `N/A` if not a test failure.
+- **error_message** — A one-line error message describing the failure.
+- **evidence** — 5-15 key log lines or error output that led to the classification. Include backend error details when available.
+- **details** — 1-3 sentences explaining what happened and why it was classified this way. If a release pipeline failure, include the managed pipelinerun name and which task/step failed in it.
+- **suggested_action** — 1-2 sentences on what to investigate or fix.
 
 ## Important Notes
 

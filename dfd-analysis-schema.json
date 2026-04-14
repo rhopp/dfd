@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "properties": {
+    "root_cause": {
+      "type": "string",
+      "description": "Snake_case taxonomy ID from the classification rules (e.g. rosa_provisioning_failure, release_quay_auth, unknown)"
+    },
+    "category": {
+      "type": "string",
+      "description": "Category from taxonomy: infrastructure, test_flake, or unknown"
+    },
+    "component": {
+      "type": "string",
+      "description": "Component identifier from metadata.json (e.g. tsf-cli, tssc-cli, tssc-test)"
+    },
+    "failed_task": {
+      "type": "string",
+      "description": "Name of the failed Tekton task (e.g. run-tsf-e2e, provision-rosa)"
+    },
+    "failed_step": {
+      "type": "string",
+      "description": "Name of the failed step within the task"
+    },
+    "completion_time": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of pipelinerun completion (from metadata.json)"
+    },
+    "test_name": {
+      "type": "string",
+      "description": "Ginkgo test name that failed, or N/A if not a test failure"
+    },
+    "error_message": {
+      "type": "string",
+      "description": "One-line error message describing the failure"
+    },
+    "evidence": {
+      "type": "string",
+      "description": "5-15 key log lines that led to the classification"
+    },
+    "details": {
+      "type": "string",
+      "description": "1-3 sentences explaining what happened and why it was classified this way"
+    },
+    "suggested_action": {
+      "type": "string",
+      "description": "1-2 sentences on what to investigate or fix"
+    }
+  },
+  "required": [
+    "root_cause",
+    "category",
+    "component",
+    "failed_task",
+    "failed_step",
+    "completion_time",
+    "test_name",
+    "error_message",
+    "evidence",
+    "details",
+    "suggested_action"
+  ],
+  "additionalProperties": false
+}

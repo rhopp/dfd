@@ -27,6 +27,7 @@ set -euo pipefail
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ANALYSIS_SCHEMA="$(cat "${SCRIPT_DIR}/dfd-analysis-schema.json")"
 HOURS_BACK="${1:-24}"
 MAX_PARALLEL="${2:-5}"
 
@@ -449,43 +450,72 @@ with open('${RULES_FILE}') as f:
 " 2>/dev/null
 }
 
-# Validate an analysis.md has all required fields parseable by extract-data.py.
-# Returns a comma-separated list of missing fields, or empty if all present.
-# Also checks root_cause against valid taxonomy IDs for the component.
+# Validate an analysis.json has all required fields and a valid root_cause.
+# Returns a comma-separated list of issues, or empty if all present.
 validate_analysis() {
     local ANALYSIS_FILE="$1"
     local VALID_ROOT_CAUSES="$2"
     python3 -c "
-import re, sys
+import json, sys
 
-with open('${ANALYSIS_FILE}') as f:
-    text = f.read()
+try:
+    with open('${ANALYSIS_FILE}') as f:
+        data = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    print('invalid or missing analysis.json')
+    sys.exit(0)
 
 missing = []
 
-# Required summary fields
-for field in ['Root Cause', 'Category', 'Failed Task', 'Failed Step']:
-    m = re.search(rf'\*\*{field}:?\*\*:?\s*(.+?)(?:\n|$)', text)
-    if not m or not m.group(1).strip().strip('\x60'):
-        missing.append(field)
-
-# Root cause must be a valid taxonomy ID
-rc_match = re.search(r'\*\*Root Cause:?\*\*:?\s*(.+?)(?:\n|$)', text)
-if rc_match:
-    rc = rc_match.group(1).strip().strip('\x60')
-    valid = set('''${VALID_ROOT_CAUSES}'''.split())
-    if rc and rc not in valid:
-        missing.append('Root Cause (invalid: ' + rc + ')')
-
-# Evidence section
-if not re.search(r'## Evidence', text):
-    missing.append('Evidence section')
-
-# Details section
-if not re.search(r'## Details', text):
-    missing.append('Details section')
+# Check root_cause is a valid taxonomy ID
+rc = data.get('root_cause', '')
+valid = set('''${VALID_ROOT_CAUSES}'''.split())
+if rc and rc not in valid:
+    missing.append('Root Cause (invalid: ' + rc + ')')
 
 print(','.join(missing))
+" 2>/dev/null
+}
+
+# Render analysis.md from analysis.json for Phase 3 consolidation compatibility.
+render_analysis_md() {
+    local PR_NAME="$1"
+    local PR_DIR="$2"
+    python3 -c "
+import json
+with open('${PR_DIR}/analysis.json') as f:
+    d = json.load(f)
+with open('${PR_DIR}/analysis.md', 'w') as out:
+    out.write(f'''# Analysis: ${PR_NAME}
+
+## Summary
+
+- **Root Cause:** \`{d['root_cause']}\`
+- **Category:** \`{d['category']}\`
+- **Component:** \`{d['component']}\`
+- **Failed Task:** \`{d['failed_task']}\`
+- **Failed Step:** \`{d['failed_step']}\`
+- **Completion Time:** {d['completion_time']}
+
+## Failed Test
+
+- **Test Name:** {d['test_name']}
+- **Error Message:** {d['error_message']}
+
+## Evidence
+
+\`\`\`
+{d['evidence']}
+\`\`\`
+
+## Details
+
+{d['details']}
+
+## Suggested Action
+
+{d['suggested_action']}
+''')
 " 2>/dev/null
 }
 
@@ -499,7 +529,7 @@ analyze_pr() {
         return
     fi
 
-    if [[ -s "${PR_DIR}/analysis.md" ]]; then
+    if [[ -s "${PR_DIR}/analysis.json" ]]; then
         log "[${PR_NAME}] Analysis already present — skipping"
         return
     fi
@@ -513,7 +543,6 @@ Then read ${PR_DIR}/kubearchive/failed_step.log for the pod log.
 If the failure involves a release pipeline, check ${PR_DIR}/artifacts/cluster-artifacts/ for managed pipelinerun data.
 
 Follow the investigation workflow and classification rules in your system prompt.
-Output your analysis as markdown following the specified format.
 
 If you classify the failure as unknown but discover a new recognizable pattern, write a rule proposal to ${PR_DIR}/rule_proposal.json following the instructions in your system prompt."
 
@@ -521,6 +550,7 @@ If you classify the failure as unknown but discover a new recognizable pattern, 
     claude -p "${PROMPT}" \
         --verbose \
         --output-format json \
+        --json-schema "${ANALYSIS_SCHEMA}" \
         --dangerously-skip-permissions \
         --allowedTools "Read,Write(${PR_DIR}/rule_proposal.json),Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(find*),Bash(gunzip*),Bash(wc*),Bash(file*),Bash(grep*)" \
         --append-system-prompt-file "${SCRIPT_DIR}/dfd-rules.md" \
@@ -529,19 +559,29 @@ If you classify the failure as unknown but discover a new recognizable pattern, 
         > "${CLAUDE_JSON}" 2> "${PR_DIR}/claude_stderr.log" || {
             warn "[${PR_NAME}] Claude analysis failed (exit code $?)"
             warn "[${PR_NAME}] stderr: $(cat "${PR_DIR}/claude_stderr.log")"
-            printf '%s\n' "# Analysis: ${PR_NAME}" "" "## Summary" "" "- **Root Cause:** unknown" "- **Category:** unknown" "" "Claude analysis failed to complete." > "${PR_DIR}/analysis.md"
+            python3 -c "
+import json
+data = {'root_cause': 'unknown', 'category': 'unknown', 'component': '${COMP}',
+        'failed_task': 'unknown', 'failed_step': 'unknown', 'completion_time': '',
+        'test_name': 'N/A', 'error_message': 'Claude analysis failed to complete',
+        'evidence': '', 'details': 'Claude analysis failed to complete.', 'suggested_action': 'Retry the analysis.'}
+with open('${PR_DIR}/analysis.json', 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null
+            render_analysis_md "${PR_NAME}" "${PR_DIR}"
             return
         }
 
-    # Extract analysis text and cost data from JSON output
+    # Extract structured output and cost data from JSON envelope
     python3 -c "
 import json, sys
 with open('${CLAUDE_JSON}') as f:
     data = json.load(f)
 for item in data:
     if item.get('type') == 'result':
-        with open('${PR_DIR}/analysis.md', 'w') as out:
-            out.write(item.get('result', ''))
+        structured = item.get('structured_output', {})
+        with open('${PR_DIR}/analysis.json', 'w') as out:
+            json.dump(structured, out, indent=2)
         cost = {
             'invocation': '${PR_NAME}',
             'cost_usd': item.get('total_cost_usd', 0),
@@ -556,6 +596,7 @@ for item in data:
         break
 " 2>/dev/null
     rm -f "${CLAUDE_JSON}"
+    render_analysis_md "${PR_NAME}" "${PR_DIR}"
 
     log "[${PR_NAME}] Analysis complete."
 }
@@ -575,29 +616,21 @@ reanalyze_pr() {
 
     log "[${PR_NAME}] Re-analyzing (issues: ${MISSING_FIELDS})..."
 
-    local PROMPT="Your previous analysis of the failed e2e pipelinerun in ${PR_DIR} had formatting issues that prevent machine parsing.
-
-The following problems were detected:
+    local PROMPT="Your previous analysis of the failed e2e pipelinerun in ${PR_DIR} had issues:
 ${MISSING_FIELDS}
 
 Re-analyze the failure. Read ${PR_DIR}/metadata.json and ${PR_DIR}/kubearchive/failed_step.log again.
 If artifacts exist, check ${PR_DIR}/artifacts/cluster-artifacts/.
 
-CRITICAL: Your output MUST follow the EXACT format specified in your system prompt.
-Pay special attention to:
-- Section headers: ## Summary, ## Failed Test, ## Evidence, ## Details, ## Suggested Action
-- Summary fields on their own lines: - **Root Cause:** \`value\`
-- Root Cause must be a valid taxonomy ID from the rules (snake_case, backtick-wrapped)
-- Evidence section must contain a fenced code block
-- Details and Suggested Action sections must have content
+CRITICAL: Root Cause must be a valid taxonomy ID from the classification rules (snake_case).
 
-Follow the investigation workflow and classification rules in your system prompt.
-Output your analysis as markdown following the specified format."
+Follow the investigation workflow and classification rules in your system prompt."
 
     local CLAUDE_JSON="${PR_DIR}/claude_output.json"
     claude -p "${PROMPT}" \
         --verbose \
         --output-format json \
+        --json-schema "${ANALYSIS_SCHEMA}" \
         --dangerously-skip-permissions \
         --allowedTools "Read,Write(${PR_DIR}/rule_proposal.json),Bash(cat*),Bash(ls*),Bash(head*),Bash(tail*),Bash(find*),Bash(gunzip*),Bash(wc*),Bash(file*),Bash(grep*)" \
         --append-system-prompt-file "${SCRIPT_DIR}/dfd-rules.md" \
@@ -614,8 +647,9 @@ with open('${CLAUDE_JSON}') as f:
     data = json.load(f)
 for item in data:
     if item.get('type') == 'result':
-        with open('${PR_DIR}/analysis.md', 'w') as out:
-            out.write(item.get('result', ''))
+        structured = item.get('structured_output', {})
+        with open('${PR_DIR}/analysis.json', 'w') as out:
+            json.dump(structured, out, indent=2)
         cost = {
             'invocation': '${PR_NAME}-revalidation',
             'cost_usd': item.get('total_cost_usd', 0),
@@ -630,6 +664,7 @@ for item in data:
         break
 " 2>/dev/null
     rm -f "${CLAUDE_JSON}"
+    render_analysis_md "${PR_NAME}" "${PR_DIR}"
 
     log "[${PR_NAME}] Re-analysis complete."
 }
@@ -678,10 +713,9 @@ while IFS= read -r LINE; do
     [[ -z "${LINE}" ]] && continue
     PR_NAME="${LINE#*|}"
     COMP="${LINE%%|*}"
-    ANALYSIS_FILE="${RUN_DIR}/${PR_NAME}/analysis.md"
-    if [[ -f "${ANALYSIS_FILE}" ]]; then
-        # Check if root_cause is unknown (any variation)
-        if grep -qiP '\*\*Root Cause:?\*\*:?\s*`?unknown' "${ANALYSIS_FILE}" 2>/dev/null; then
+    ANALYSIS_JSON="${RUN_DIR}/${PR_NAME}/analysis.json"
+    if [[ -f "${ANALYSIS_JSON}" ]]; then
+        if jq -e '.root_cause == "unknown"' "${ANALYSIS_JSON}" >/dev/null 2>&1; then
             UNKNOWN_PRS="${UNKNOWN_PRS}${LINE}\n"
             UNKNOWN_COUNT=$((UNKNOWN_COUNT + 1))
         fi
@@ -697,7 +731,7 @@ if [[ ${UNKNOWN_COUNT} -gt 0 ]]; then
         PR_NAME="${LINE#*|}"
         PR_DIR="${RUN_DIR}/${PR_NAME}"
         # Remove old analysis so analyze_pr will re-run
-        rm -f "${PR_DIR}/analysis.md"
+        rm -f "${PR_DIR}/analysis.json" "${PR_DIR}/analysis.md"
         log "[${PR_NAME}] Re-analyzing (was unknown)..."
         analyze_pr "${COMP}" "${PR_NAME}" < /dev/null &
         JOBS_RUNNING=$((JOBS_RUNNING + 1))
@@ -717,7 +751,7 @@ fi
 # Phase 2.7: Root Cause Validation Loop
 # =============================================================================
 
-MAX_VALIDATION_RETRIES=2
+MAX_VALIDATION_RETRIES=1
 log "=== Phase 2.7: Analysis Validation ==="
 
 # Build a mapping of component -> valid root causes (once, outside the loop)
@@ -737,10 +771,10 @@ for RETRY in $(seq 1 ${MAX_VALIDATION_RETRIES}); do
         [[ -z "${LINE}" ]] && continue
         COMP="${LINE%%|*}"
         PR_NAME="${LINE#*|}"
-        ANALYSIS_FILE="${RUN_DIR}/${PR_NAME}/analysis.md"
+        ANALYSIS_FILE="${RUN_DIR}/${PR_NAME}/analysis.json"
 
         if [[ ! -f "${ANALYSIS_FILE}" ]]; then
-            PR_ISSUES["${LINE}"]="analysis.md file missing"
+            PR_ISSUES["${LINE}"]="analysis.json file missing"
             INVALID_PRS="${INVALID_PRS}${LINE}\n"
             INVALID_COUNT=$((INVALID_COUNT + 1))
             continue
@@ -770,7 +804,7 @@ for RETRY in $(seq 1 ${MAX_VALIDATION_RETRIES}); do
         ISSUES="${PR_ISSUES[${LINE}]}"
 
         # Remove old analysis so the agent starts fresh
-        rm -f "${RUN_DIR}/${PR_NAME}/analysis.md"
+        rm -f "${RUN_DIR}/${PR_NAME}/analysis.json" "${RUN_DIR}/${PR_NAME}/analysis.md"
         reanalyze_pr "${COMP}" "${PR_NAME}" "${ISSUES}" < /dev/null &
         JOBS_RUNNING=$((JOBS_RUNNING + 1))
 
@@ -789,86 +823,37 @@ while IFS= read -r LINE; do
     [[ -z "${LINE}" ]] && continue
     COMP="${LINE%%|*}"
     PR_NAME="${LINE#*|}"
-    ANALYSIS_FILE="${RUN_DIR}/${PR_NAME}/analysis.md"
+    ANALYSIS_FILE="${RUN_DIR}/${PR_NAME}/analysis.json"
     PR_DIR="${RUN_DIR}/${PR_NAME}"
 
+    WRITE_FALLBACK=""
     if [[ ! -f "${ANALYSIS_FILE}" ]]; then
-        log "[${PR_NAME}] Writing fallback analysis (file missing after ${MAX_VALIDATION_RETRIES} retries)"
-        # Read metadata for fallback values
-        FAILED_TASK=$(jq -r '.failed_task // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
-        FAILED_STEP=$(jq -r '.failed_step // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
-        COMPLETION=$(jq -r '.completion_time // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
-        cat > "${ANALYSIS_FILE}" <<FALLBACK
-# Analysis: ${PR_NAME}
-
-## Summary
-
-- **Root Cause:** \`unknown\`
-- **Category:** \`unknown\`
-- **Component:** \`${COMP}\`
-- **Failed Task:** \`${FAILED_TASK}\`
-- **Failed Step:** \`${FAILED_STEP}\`
-- **Completion Time:** ${COMPLETION}
-
-## Failed Test
-
-- **Test Name:** N/A
-- **Error Message:** Agent failed to produce valid analysis after ${MAX_VALIDATION_RETRIES} retries
-
-## Evidence
-
-\`\`\`
-No evidence available — agent analysis failed validation.
-\`\`\`
-
-## Details
-
-The Claude agent was unable to produce a correctly formatted analysis after ${MAX_VALIDATION_RETRIES} retry attempts. Manual investigation is recommended.
-
-## Suggested Action
-
-Review the pipelinerun logs manually. Check ${PR_DIR}/kubearchive/ for raw data.
-FALLBACK
-        continue
+        WRITE_FALLBACK="analysis.json file missing after ${MAX_VALIDATION_RETRIES} retries"
+    else
+        MISSING=$(validate_analysis "${ANALYSIS_FILE}" "${COMP_VALID_ROOT_CAUSES[$COMP]}")
+        if [[ -n "${MISSING}" ]]; then
+            WRITE_FALLBACK="issues: ${MISSING}"
+        fi
     fi
 
-    MISSING=$(validate_analysis "${ANALYSIS_FILE}" "${COMP_VALID_ROOT_CAUSES[$COMP]}")
-    if [[ -n "${MISSING}" ]]; then
-        log "[${PR_NAME}] Forcing fallback analysis after ${MAX_VALIDATION_RETRIES} retries (issues: ${MISSING})"
+    if [[ -n "${WRITE_FALLBACK}" ]]; then
+        log "[${PR_NAME}] Writing fallback analysis (${WRITE_FALLBACK})"
         FAILED_TASK=$(jq -r '.failed_task // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
         FAILED_STEP=$(jq -r '.failed_step // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
         COMPLETION=$(jq -r '.completion_time // "unknown"' "${PR_DIR}/metadata.json" 2>/dev/null || echo "unknown")
-        cat > "${ANALYSIS_FILE}" <<FALLBACK
-# Analysis: ${PR_NAME}
-
-## Summary
-
-- **Root Cause:** \`unknown\`
-- **Category:** \`unknown\`
-- **Component:** \`${COMP}\`
-- **Failed Task:** \`${FAILED_TASK}\`
-- **Failed Step:** \`${FAILED_STEP}\`
-- **Completion Time:** ${COMPLETION}
-
-## Failed Test
-
-- **Test Name:** N/A
-- **Error Message:** Agent produced invalid analysis format after ${MAX_VALIDATION_RETRIES} retries (${MISSING})
-
-## Evidence
-
-\`\`\`
-No evidence available — agent analysis failed validation.
-\`\`\`
-
-## Details
-
-The Claude agent produced an analysis that could not be machine-parsed. Validation issues: ${MISSING}. Manual investigation is recommended.
-
-## Suggested Action
-
-Review the pipelinerun logs manually. Check ${PR_DIR}/kubearchive/ for raw data.
-FALLBACK
+        python3 -c "
+import json
+data = {'root_cause': 'unknown', 'category': 'unknown', 'component': '${COMP}',
+        'failed_task': '${FAILED_TASK}', 'failed_step': '${FAILED_STEP}',
+        'completion_time': '${COMPLETION}', 'test_name': 'N/A',
+        'error_message': 'Agent failed to produce valid analysis after ${MAX_VALIDATION_RETRIES} retries',
+        'evidence': 'No evidence available — agent analysis failed validation.',
+        'details': 'The Claude agent was unable to produce a valid analysis after ${MAX_VALIDATION_RETRIES} retry attempts. Manual investigation is recommended.',
+        'suggested_action': 'Review the pipelinerun logs manually. Check ${PR_DIR}/kubearchive/ for raw data.'}
+with open('${ANALYSIS_FILE}', 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null
+        render_analysis_md "${PR_NAME}" "${PR_DIR}"
     fi
 done < "${FAILED_PRS_FILE}"
 
