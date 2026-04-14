@@ -32,6 +32,7 @@
 | **Other** | | |
 | `test_flake` | test_flake | Test fails intermittently with no clear infra cause |
 | **Agent-Discovered Patterns** | | |
+| `gitlab_api_error` | infrastructure | GitLab API query timeout during merge request creation |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -53,4 +54,5 @@ Apply these in order — first match wins:
 9. If test mentions `ArgoCDSyncError` -> `deployment_argocd_sync`
 10. If component creation test + timeout -> `component_creation_timeout`
 11. If `[INTERRUPTED] by User` (global timeout) -> `build_timeout`
-12. Otherwise -> `unknown`
+12. If 'Query timeout was reached' AND ('GitLabMergeRequestService' OR 'GitLabError') -> `gitlab_api_error`
+13. Otherwise -> `unknown`

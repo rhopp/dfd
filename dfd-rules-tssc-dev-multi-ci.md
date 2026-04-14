@@ -32,6 +32,8 @@
 | **Other** | | |
 | `test_flake` | test_flake | Test fails intermittently with no clear infra cause |
 | **Agent-Discovered Patterns** | | |
+| `azure_devops_rate_limit` | infrastructure | Azure DevOps API rate limiting (HTTP 429) |
+| `ui_test_oom_killed` | infrastructure | OOMKilled in rhtap-ui-tests task |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -53,4 +55,6 @@ Apply these in order — first match wins:
 9. If test mentions `ArgoCDSyncError` -> `deployment_argocd_sync`
 10. If component creation test + timeout -> `component_creation_timeout`
 11. If `[INTERRUPTED] by User` (global timeout) -> `build_timeout`
-12. Otherwise -> `unknown`
+12. If any output contains 'Request failed with status code 429' AND 'azure' (case-insensitive) -> `azure_devops_rate_limit`
+13. If metadata.json shows condition_message: 'OOMKilled' and failed_task is 'rhtap-ui-tests' -> `ui_test_oom_killed`
+14. Otherwise -> `unknown`
