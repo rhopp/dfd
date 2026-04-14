@@ -232,12 +232,29 @@ for item in data.get('items', []):
         continue
 
     run_status = {'SUCCESS': 'succeeded', 'FAILURE': 'failed', 'ABORTED': 'aborted'}[status]
-    all_filtered.append({
+    labels = item['metadata'].get('labels', {})
+    run_obj = {
         'pipelinerun': name,
         'component': '${COMP}',
         'completion_time': ct,
         'status': run_status,
-    })
+    }
+    event_type = labels.get('pac.test.appstudio.openshift.io/event-type', '')
+    if event_type:
+        run_obj['event_type'] = event_type
+    pr_number = labels.get('pac.test.appstudio.openshift.io/pull-request', '')
+    if pr_number:
+        run_obj['pull_request_number'] = pr_number
+    git_org = labels.get('pac.test.appstudio.openshift.io/url-org', '')
+    if git_org:
+        run_obj['git_org'] = git_org
+    git_repo = labels.get('pac.test.appstudio.openshift.io/url-repository', '')
+    if git_repo:
+        run_obj['git_repo'] = git_repo
+    app = labels.get('appstudio.openshift.io/application', '')
+    if app:
+        run_obj['application'] = app
+    all_filtered.append(run_obj)
 
     if status == 'FAILURE':
         failed_prs.append(name)
