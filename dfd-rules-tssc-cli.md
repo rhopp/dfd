@@ -34,6 +34,7 @@
 | **Agent-Discovered Patterns** | | |
 | `component_creation_github_404` | infrastructure | Component creation fails when publishing repository to GitHub with 404 Not Found error |
 | `gitlab_ci_empty_logs` | infrastructure | GitLab CI pipeline fails with unavailable or empty job logs |
+| `image_pull_failure` | infrastructure | Container image pull failures (Back-off pulling image, failed to pull the image) |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -57,4 +58,5 @@ Apply these in order — first match wins:
 11. If `[INTERRUPTED] by User` (global timeout) -> `build_timeout`
 12. If component creation fails AND error contains '404 Not Found' AND step name contains 'Publish' AND 'GitHub' -> component_creation_github_404
 13. If GitLab CI pipeline status is failure AND job logs are empty/unavailable after multiple retries -> `gitlab_ci_empty_logs`
-14. Otherwise -> `unknown`
+14. If condition_message or pod logs contain 'Back-off pulling image' or 'failed to pull' -> `image_pull_failure`
+15. Otherwise -> `unknown`
