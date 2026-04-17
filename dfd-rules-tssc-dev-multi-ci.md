@@ -34,6 +34,7 @@
 | **Agent-Discovered Patterns** | | |
 | `azure_devops_rate_limit` | infrastructure | Azure DevOps API rate limiting (HTTP 429) |
 | `ui_test_oom_killed` | infrastructure | OOMKilled in rhtap-ui-tests task |
+| `azure_devops_pipeline_lookup_failure` | infrastructure | Azure DevOps pipeline lookup fails after retries with 'Pipeline not found or not yet running' and/or API timeouts |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -57,4 +58,5 @@ Apply these in order — first match wins:
 11. If `[INTERRUPTED] by User` (global timeout) -> `build_timeout`
 12. If any output contains 'Request failed with status code 429' AND 'azure' (case-insensitive) -> `azure_devops_rate_limit`
 13. If metadata.json shows condition_message: 'OOMKilled' and failed_task is 'rhtap-ui-tests' -> `ui_test_oom_killed`
-14. Otherwise -> `unknown`
+14. If test output contains 'Pipeline not found or not yet running' with 'Azure' context AND multiple retry attempts OR 'AzureApiError: timeout' -> azure_devops_pipeline_lookup_failure
+15. Otherwise -> `unknown`
