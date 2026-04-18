@@ -35,6 +35,7 @@
 | `azure_devops_rate_limit` | infrastructure | Azure DevOps API rate limiting (HTTP 429) |
 | `ui_test_oom_killed` | infrastructure | OOMKilled in rhtap-ui-tests task |
 | `azure_devops_pipeline_lookup_failure` | infrastructure | Azure DevOps pipeline lookup fails after retries with 'Pipeline not found or not yet running' and/or API timeouts |
+| `build_quay_auth` | infrastructure | Tekton build pipeline fails during image push to Quay with authentication error |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -59,4 +60,5 @@ Apply these in order — first match wins:
 12. If any output contains 'Request failed with status code 429' AND 'azure' (case-insensitive) -> `azure_devops_rate_limit`
 13. If metadata.json shows condition_message: 'OOMKilled' and failed_task is 'rhtap-ui-tests' -> `ui_test_oom_killed`
 14. If test output contains 'Pipeline not found or not yet running' with 'Azure' context AND multiple retry attempts OR 'AzureApiError: timeout' -> azure_devops_pipeline_lookup_failure
-15. Otherwise -> `unknown`
+15. If exit code 125 AND error contains 'pushing image' AND 'quay.io' AND 'unauthorized: access to the requested resource is not authorized' -> `build_quay_auth`
+16. Otherwise -> `unknown`
