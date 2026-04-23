@@ -35,6 +35,7 @@
 | `integration_test_ec_policy_violation` | infrastructure | Integration test pipelinerun name matches `enterprise-contract` pipeline AND TaskRun verify step-assert fails with TEST_OUTPUT containing `"result":"FAILURE"` AND violations array is non-empty |
 | `e2e_test_compilation_failure` | infrastructure | E2e test fails during test binary compilation due to Go module dependency version conflicts or interface incompatibilities |
 | `e2e_test_cleanup_namespace_deletion_timeout` | infrastructure | E2e test cleanup fails because namespace deletion times out waiting for stuck PipelineRun(s) to be removed |
+| `release_tuf_dns_failure` | infrastructure | Release pipeline fails in process-component-sbom task due to DNS resolution failure when accessing TUF (The Update Framework) server for cosign initialization |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -59,4 +60,5 @@ Apply these in order — first match wins:
 12. If test is `should eventually complete successfully` (integration test) AND pipelinerun is `enterprise-contract` AND step-assert fails with EC violations -> `integration_test_ec_policy_violation`
 13. If e2e/integration test fails AND step log contains 'go test -c' OR 'make build' AND compilation errors mention interface type mismatches or 'does not implement' OR 'cannot use .* as .* value in return statement' -> e2e_test_compilation_failure
 14. If error in AfterAll cleanup AND message contains 'namespace was not deleted in expected timeframe' AND 'context deadline exceeded' AND 'Remaining resources in namespace' with stuck pipelineruns -> `e2e_test_cleanup_namespace_deletion_timeout`
-15. Otherwise -> `unknown`
+15. If Release pipeline failure in 'process-component-sbom' task AND step log contains 'cosign initialize' AND error message contains 'dial tcp: lookup tuf-' AND 'no such host' -> `release_tuf_dns_failure`
+16. Otherwise -> `unknown`
