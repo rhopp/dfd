@@ -37,6 +37,9 @@
 | `image_pull_failure` | infrastructure | Container image pull failures (Back-off pulling image, failed to pull the image) |
 | `developer_hub_api_socket_hangup` | infrastructure | Component creation test fails with 'Failed to retrieve Developer Hub task status: socket hang up' |
 | `component_creation_developer_hub_auth` | infrastructure | Component creation fails when Developer Hub (Backstage) API returns 401 Unauthorized |
+| `component_creation_github_500` | infrastructure | Component creation fails when Developer Hub (Backstage) tries to publish/push the scaffolded repository to GitHub and receives HTTP 500 Internal Server Error |
+| `tuf_tls_certificate_failure` | infrastructure | TLS certificate verification failure when accessing TUF (The Update Framework) server for SBOM attestation |
+| `gitlab_ci_pipeline_not_triggered` | infrastructure | GitLab CI pipeline was not triggered after merge request creation |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -63,4 +66,7 @@ Apply these in order — first match wins:
 14. If condition_message or pod logs contain 'Back-off pulling image' or 'failed to pull' -> `image_pull_failure`
 15. If component creation test AND error contains 'Failed to retrieve Developer Hub task status' AND 'socket hang up' -> developer_hub_api_socket_hangup
 16. If component creation test fails AND error contains 'Failed to create Developer Hub component' AND 'status code 401' -> component_creation_developer_hub_auth
-17. Otherwise -> `unknown`
+17. If component creation fails AND error contains '500 Internal Server Error' AND step name contains 'publish' AND 'GitHub' -> component_creation_github_500
+18. If logs contain 'tls: failed to verify certificate' AND ('tuf' OR 'root.json') AND 'Custom root CA variable is not set' -> tuf_tls_certificate_failure
+19. If GitLab merge request creation succeeds AND subsequent pipeline lookup repeatedly returns 0 pipelines for the commit SHA AND error contains 'Pipeline not found or not yet running' -> gitlab_ci_pipeline_not_triggered
+20. Otherwise -> `unknown`
