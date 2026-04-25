@@ -37,6 +37,8 @@
 | `e2e_test_cleanup_namespace_deletion_timeout` | infrastructure | E2e test cleanup fails because namespace deletion times out waiting for stuck PipelineRun(s) to be removed |
 | `release_tuf_dns_failure` | infrastructure | Release pipeline fails in process-component-sbom task due to DNS resolution failure when accessing TUF (The Update Framework) server for cosign initialization |
 | `e2e_test_compilation_oom` | infrastructure | E2e test fails during test binary compilation due to out-of-memory condition killing the Go compiler process |
+| `release_autorelease_concurrent_snapshot_race` | test_flake | E2e test fails when waiting for Release CR creation because a concurrent build's snapshot completed integration tests first and triggered auto-release, causing the tracked snapshot to be marked as 'Released in newer Snapshot' without its own Release CR |
+| `release_tuf_tls_cert_failure` | infrastructure | Release pipeline fails in process-component-sbom task due to TLS certificate verification failure when cosign initializes with TUF server |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -63,4 +65,6 @@ Apply these in order — first match wins:
 14. If error in AfterAll cleanup AND message contains 'namespace was not deleted in expected timeframe' AND 'context deadline exceeded' AND 'Remaining resources in namespace' with stuck pipelineruns -> `e2e_test_cleanup_namespace_deletion_timeout`
 15. If Release pipeline failure in 'process-component-sbom' task AND step log contains 'cosign initialize' AND error message contains 'dial tcp: lookup tuf-' AND 'no such host' -> `release_tuf_dns_failure`
 16. If e2e/integration test step fails AND metadata shows OOMKilled AND step log contains Go compilation command ('go test -c' OR 'make build') AND error shows '/usr/lib/golang/pkg/tool/.*/compile: signal: killed' -> e2e_test_compilation_oom
-17. Otherwise -> `unknown`
+17. If test fails with 'timed out when waiting for Release CR to be created for snapshot' AND snapshot has AutoReleased condition 'Released in newer Snapshot' -> `release_autorelease_concurrent_snapshot_race`
+18. If task='process-component-sbom' AND error contains 'tls: failed to verify certificate' AND log contains 'cosign initialize' -> `release_tuf_tls_cert_failure`
+19. Otherwise -> `unknown`

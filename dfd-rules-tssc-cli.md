@@ -40,6 +40,8 @@
 | `component_creation_github_500` | infrastructure | Component creation fails when Developer Hub (Backstage) tries to publish/push the scaffolded repository to GitHub and receives HTTP 500 Internal Server Error |
 | `tuf_tls_certificate_failure` | infrastructure | TLS certificate verification failure when accessing TUF (The Update Framework) server for SBOM attestation |
 | `gitlab_ci_pipeline_not_triggered` | infrastructure | GitLab CI pipeline was not triggered after merge request creation |
+| `hive_provisioning_failure` | infrastructure | Hive cluster pool provisioning timeout or failure |
+| `component_creation_developer_hub_404` | infrastructure | Component creation fails when Developer Hub (Backstage) API returns 404 Not Found during component scaffolding |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -69,4 +71,6 @@ Apply these in order — first match wins:
 17. If component creation fails AND error contains '500 Internal Server Error' AND step name contains 'publish' AND 'GitHub' -> component_creation_github_500
 18. If logs contain 'tls: failed to verify certificate' AND ('tuf' OR 'root.json') AND 'Custom root CA variable is not set' -> tuf_tls_certificate_failure
 19. If GitLab merge request creation succeeds AND subsequent pipeline lookup repeatedly returns 0 pipelines for the commit SHA AND error contains 'Pipeline not found or not yet running' -> gitlab_ci_pipeline_not_triggered
-20. Otherwise -> `unknown`
+20. If Task name is 'provision-hive' AND (log contains 'timed out waiting for the condition on clusterclaims' OR 'Cluster failed to start in 60 minutes') -> `hive_provisioning_failure`
+21. If component creation test fails AND error contains 'Failed to create Developer Hub component' AND 'status code 404' -> component_creation_developer_hub_404
+22. Otherwise -> `unknown`
