@@ -43,6 +43,7 @@
 | `hive_provisioning_failure` | infrastructure | Hive cluster pool provisioning timeout or failure |
 | `component_creation_developer_hub_404` | infrastructure | Component creation fails when Developer Hub (Backstage) API returns 404 Not Found during component scaffolding |
 | `tekton_chains_signing_failure` | infrastructure | Stage promotion pipeline fails because Tekton Chains cannot sign the pipeline, causing downstream attestation-dependent tasks to fail |
+| `github_actions_workflow_not_triggered` | infrastructure | GitHub Actions workflow was not triggered after PR/commit creation |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -75,4 +76,5 @@ Apply these in order — first match wins:
 20. If Task name is 'provision-hive' AND (log contains 'timed out waiting for the condition on clusterclaims' OR 'Cluster failed to start in 60 minutes') -> `hive_provisioning_failure`
 21. If component creation test fails AND error contains 'Failed to create Developer Hub component' AND 'status code 404' -> component_creation_developer_hub_404
 22. If stage promotion pipeline fails AND annotations show 'chains.tekton.dev/signed: failed' AND verify/download tasks dependent on attestations fail -> tekton_chains_signing_failure
-23. Otherwise -> `unknown`
+23. If test project name contains 'github-githubactions' AND error contains 'Pipeline not found or not yet running' AND error occurs during getPipelineAndWaitForCompletion -> github_actions_workflow_not_triggered
+24. Otherwise -> `unknown`
