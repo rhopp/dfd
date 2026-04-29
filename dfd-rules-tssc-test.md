@@ -34,6 +34,7 @@
 | **Agent-Discovered Patterns** | | |
 | `gitlab_api_error` | infrastructure | GitLab API query timeout during merge request creation |
 | `ui_infrastructure_failure` | infrastructure | rhtap-ui-tests task fails with multiple Playwright expect(locator).toBeVisible() failures |
+| `build_pipeline_not_triggered` | infrastructure | Build pipeline was never created/triggered despite expected PR or commit event |
 | `unknown` | unknown | Cannot determine root cause from available data |
 
 ## Classification Priority Rules
@@ -57,4 +58,5 @@ Apply these in order — first match wins:
 11. If `[INTERRUPTED] by User` (global timeout) -> `build_timeout`
 12. If 'Query timeout was reached' AND ('GitLabMergeRequestService' OR 'GitLabError') -> `gitlab_api_error`
 13. If task is `rhtap-ui-tests` AND log contains multiple instances of `expect(locator).toBeVisible() failed` AND `element(s) not found` across different test cases -> `ui_infrastructure_failure`
-14. Otherwise -> `unknown`
+14. If test context is about building (buildApplicationImageWithPR, 'Build Application Image' suite) AND error is 'Pipeline not found or not yet running' AND logs show 'Found 0 Tekton PipelineRuns' repeatedly across multiple retry cycles -> build_pipeline_not_triggered
+15. Otherwise -> `unknown`
